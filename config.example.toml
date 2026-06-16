@@ -1,0 +1,12 @@
+# Copy to homeaccess.toml (gitignored) and fill in, OR set the matching
+# HOMEACCESS_* environment variables instead. Env vars take precedence.
+[account]
+identifier = "you@example.com"   # account email
+credential = "your-password"     # account password (kept out of VCS)
+areacode   = "61"                # phone area code used at signup
+
+# Optional:
+# language   = "en_US"
+# datacenter = "PhilipsNorthAmerica"   # pin to one datacenter (default: all)
+# verify_tls = true
+# debug_proxy = "http://127.0.0.1:8080"   # route traffic through an intercept proxy

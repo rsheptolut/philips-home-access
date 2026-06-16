@@ -1,0 +1,5 @@
+# Pin loosely; these are the only deps you need for dynamic API poking.
+requests>=2.32      # simple, ubiquitous HTTP client with Session support
+rich>=13.0          # pretty-prints JSON / tables so responses are readable
+cryptography>=42    # RSA signing + request encryption (signing.py)
+websocket-client>=1.8  # realtime lock events over WebSocket (realtime.py)

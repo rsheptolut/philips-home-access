@@ -1,0 +1,21 @@
+# Secrets & user config
+homeaccess.toml
+.env
+
+# Runtime state (regenerable token + device cache)
+state/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Reverse-engineering artifacts are intentionally NOT in the repo
+# (kept locally / backed up): APKs, decompiled output, captures, etc.
+*.apk
+*.har
+captures/
