@@ -1,0 +1,4 @@
+# Normalize all text files to LF in the repository (authoritative).
+# Combined with core.autocrlf=true on Windows, the working tree is CRLF while
+# commits stay LF -- consistent across machines regardless of each clone's config.
+* text=auto
