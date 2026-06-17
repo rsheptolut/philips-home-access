@@ -190,10 +190,19 @@ From `WebSocketService` (classes3.dex) and confirmed live in `../realtime.py`:
 Event frames (text JSON), decoded from live tests:
 - `func:"setLock"` = command result. `body.params.dooropt` **1 = unlock, 0 = lock**.
 - `func:"wfevent"`, `eventtype:"record"` = state-change log entry (the meaningful
-  signal). Fields: `eventCode`, `eventSource`, `userID`, `appID`.
-- `func:"wfevent"`, `eventtype:"action"` = full lock-state snapshot (config dump).
+  signal). Fields: `eventType`, `eventCode`, `eventSource`, `userID`, `appID`.
+  `eventType` selects the category: **1 = deadbolt lock/unlock, 4 = door
+  open/close** (magnetic sensor). For door records: `eventCode` **1 = opened,
+  2 = closed** (eventSource 10). The deadbolt `action` snapshot's `doorSensor`
+  field is only the sensor *enabled* setting, NOT live door state -- live door
+  state comes only from these eventType-4 records.
+- `func:"wfevent"`, `eventtype:"action"` = full state snapshot. Useful fields:
+  `openStatus` (bolt: 1=locked/2=unlocked), `power` (**battery %**), plus config
+  (autoLockTime, volume, etc.). The device emits 2-3 identical ones per change.
+- `func:"partsInfo"` = door-sensor accessory report (`sn` "DLS...", model W131S),
+  carries `power` (battery) and `partsState`.
 - Correlates with device/list `openStatus`: **1 = locked, 2 = unlocked**
-  (`openStatusTime` = epoch of last change).
+  (`openStatusTime` = epoch of last change); device/list `power` = battery %.
 
 **Manual operations DO push events** (an earlier test missed them only because of
 a broken JSON heartbeat + missing-slash URL). Remote vs manual is distinguishable

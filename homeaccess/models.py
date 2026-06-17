@@ -53,6 +53,11 @@ class Lock:
     def open_status(self) -> str | None:
         return constants.OPEN_STATUS.get(self.raw.get("openStatus"))
 
+    @property
+    def battery(self) -> int | None:
+        p = self.raw.get("power")
+        return int(p) if p is not None else None
+
     @classmethod
     def from_device_record(cls, rec: dict[str, Any], queried_from: str) -> "Lock":
         # The lock's own dataCenter field is authoritative; fall back to the
@@ -81,12 +86,19 @@ class Lock:
 
 @dataclass
 class LockEvent:
-    """A parsed realtime WebSocket event."""
-    kind: str                 # setLock | record | action | <other>
+    """A parsed realtime WebSocket event.
+
+    kind:  setLock | lock | door | action | parts | <func>
+    state: locked/unlocked (lock) or opened/closed (door) or None
+    """
+    kind: str
     lock_id: str
-    state: str | None = None  # locked | unlocked | None
+    state: str | None = None
     source: str | None = None  # remote | manual | None
     user_id: int | None = None
+    battery: int | None = None
+    msg_id: int | None = None   # per-delivery sequence number (differs on re-delivery)
+    timestamp: str | None = None  # event time; timestamp+body identifies the event
     raw: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
@@ -95,4 +107,6 @@ class LockEvent:
             bits.append(self.state.upper())
         if self.source:
             bits.append(f"({self.source})")
+        if self.battery is not None:
+            bits.append(f"battery={self.battery}")
         return " ".join(bits)

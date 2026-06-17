@@ -89,11 +89,19 @@ SERVER_PUB_B_B64 = (
 )
 
 # --- Realtime (WebSocket) event decoding -----------------------------------
-# wfevent record eventCode mapping, by source.
+# wfevent "record" eventType selects the category:
+EVENT_TYPE_LOCK = 1   # deadbolt lock/unlock
+EVENT_TYPE_DOOR = 4   # door open/close (magnetic sensor)
+
+# Lock records (eventType 1), eventCode mapping by source.
 #   remote/app: eventSource 8, userID 0, appID 2
 #   manual:     eventSource 9/255, userID 255, appID 0
 REMOTE_EVENT_SOURCE = 8
 EVENT_CODE_REMOTE = {1: "locked", 2: "unlocked"}
 EVENT_CODE_MANUAL = {8: "locked", 9: "unlocked"}
-# device/list openStatus mapping.
+
+# Door records (eventType 4), eventCode mapping.
+DOOR_EVENT_CODE = {1: "opened", 2: "closed"}
+
+# action snapshot / device-list openStatus mapping (deadbolt bolt state).
 OPEN_STATUS = {1: "locked", 2: "unlocked"}

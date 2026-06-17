@@ -5,7 +5,8 @@
     python -m homeaccess status  <esn>
     python -m homeaccess lock    <esn>
     python -m homeaccess unlock  <esn>
-    python -m homeaccess watch   [datacenter]
+    python -m homeaccess watch   [datacenter]      # stream events (read-only)
+    python -m homeaccess monitor [esn]             # stream events + send commands
 
 Credentials come from env (HOMEACCESS_IDENTIFIER / HOMEACCESS_CREDENTIAL) or
 homeaccess.toml. open/close physically actuate the lock.
@@ -13,13 +14,17 @@ homeaccess.toml. open/close physically actuate the lock.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+import threading
+import time
+from collections import deque
 
 from rich.console import Console
 
 from . import constants
 from .api import HomeAccess
-from .models import LockEvent
+from .models import Datacenter, LockEvent
 from .realtime import Realtime
 from .session import AuthError
 
@@ -31,7 +36,105 @@ def _print_locks(ha: HomeAccess) -> None:
         console.print(f"  [bold]{l.esn}[/]  {l.nickname or '-':12} "
                       f"dc={l.datacenter_code}  user={l.user_number_id}  "
                       f"{'online' if l.online else 'offline'}  "
-                      f"status={l.open_status or '?'}")
+                      f"status={l.open_status or '?'}  "
+                      f"battery={l.battery if l.battery is not None else '?'}")
+
+
+def _make_event_printer():
+    """Thread-safe on_event handler with principled de-dupe:
+
+    1. Protocol re-deliveries -- the cloud emits the same event more than once
+       with a fresh msgId. Identified by identical (timestamp, body); dropped.
+    2. `action` snapshots -- the device re-reports full state at several
+       timestamps around a change. Shown only when state/battery changes.
+    Discrete events (lock, door, setLock, parts) are always shown once.
+    """
+    guard = threading.Lock()
+    seen: deque = deque(maxlen=64)
+    last_action = [None]
+
+    def printer(ev: LockEvent) -> None:
+        with guard:
+            key = (ev.timestamp, json.dumps(ev.raw.get("body"), sort_keys=True))
+            if key in seen:
+                return  # same event re-delivered (only msgId differed)
+            seen.append(key)
+            if ev.kind == "action":
+                sig = (ev.state, ev.battery)
+                if sig == last_action[0]:
+                    return
+                last_action[0] = sig
+            console.print(f"[dim]{time.strftime('%H:%M:%S')}[/] [cyan]<< {ev}[/]")
+
+    return printer
+
+
+_MONITOR_HELP = (
+    "commands: [bold]u[/]nlock [esn] | [bold]l[/]ock [esn] | "
+    "[bold]s[/]tatus [esn] | [bold]d[/]evices | [bold]h[/]elp | [bold]q[/]uit"
+)
+
+
+def _monitor(ha: HomeAccess, esn_arg: str | None) -> None:
+    locks = ha.discover()
+    if not locks:
+        console.print("[yellow]No locks found on this account.[/]")
+        return
+    target = esn_arg or (locks[0].esn if len(locks) == 1 else None)
+
+    # Start a realtime listener for each datacenter that exposes a WebSocket.
+    ws_dcs = sorted({l.datacenter_code for l in locks
+                     if Datacenter.by_code(l.datacenter_code).ws_addr})
+    if not ws_dcs:
+        console.print("[yellow]None of your locks are in a WebSocket datacenter "
+                      "(Singapore uses MQTT, not supported) -- commands only.[/]")
+    printer = _make_event_printer()
+    for code in ws_dcs:
+        rt = Realtime(ha.account, code)
+        threading.Thread(target=rt.listen, kwargs={"on_event": printer},
+                         daemon=True).start()
+        console.print(f"[green]monitoring {code}[/] (events from any source: "
+                      f"app, other devices, manual)")
+
+    console.print(f"[bold]target lock:[/] {target or '(specify per command)'}")
+    console.print(_MONITOR_HELP)
+    while True:
+        try:
+            line = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if not line:
+            continue
+        parts = line.split()
+        cmd = parts[0].lower()
+        esn = parts[1] if len(parts) > 1 else target
+        if cmd in ("q", "quit", "exit"):
+            break
+        if cmd in ("h", "help", "?"):
+            console.print(_MONITOR_HELP)
+        elif cmd in ("d", "devices"):
+            _print_locks(ha)
+        elif cmd in ("s", "status"):
+            if not esn:
+                console.print("[red]need an esn[/]")
+            else:
+                l = ha.status(esn)
+                console.print(f"  {esn}: [bold]{l.open_status or '?'}[/]  "
+                              f"battery={l.battery if l.battery is not None else '?'}")
+        elif cmd in ("u", "unlock", "open"):
+            if not esn:
+                console.print("[red]need an esn[/]")
+            else:
+                console.print(f"[yellow]>> unlock {esn}[/]")
+                ha.unlock(esn)
+        elif cmd in ("l", "lock", "close"):
+            if not esn:
+                console.print("[red]need an esn[/]")
+            else:
+                console.print(f"[yellow]>> lock {esn}[/]")
+                ha.lock_device(esn)
+        else:
+            console.print(f"[red]unknown: {cmd}[/] -- {_MONITOR_HELP}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -40,10 +143,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("login")
     sub.add_parser("devices")
     for name in ("status", "lock", "unlock"):
-        sp = sub.add_parser(name)
-        sp.add_argument("esn")
-    sw = sub.add_parser("watch")
-    sw.add_argument("datacenter", nargs="?", default=constants.DEFAULT_DATACENTER)
+        sub.add_parser(name).add_argument("esn")
+    w = sub.add_parser("watch")
+    w.add_argument("datacenter", nargs="?", default=constants.DEFAULT_DATACENTER)
+    w.add_argument("--raw", action="store_true", help="dump full event JSON")
+    sub.add_parser("monitor").add_argument("esn", nargs="?", default=None)
     args = p.parse_args(argv)
 
     ha = HomeAccess()
@@ -58,9 +162,8 @@ def main(argv: list[str] | None = None) -> int:
             _print_locks(ha)
         elif args.cmd == "status":
             l = ha.status(args.esn)
-            console.print(f"{l.esn}: [bold]{l.open_status or '?'}[/] "
-                          f"(openStatus={l.raw.get('openStatus')}, "
-                          f"power={l.raw.get('power')})")
+            console.print(f"{l.esn}: [bold]{l.open_status or '?'}[/]  "
+                          f"battery={l.battery if l.battery is not None else '?'}")
         elif args.cmd == "unlock":
             console.print(f"[yellow]unlocking {args.esn}...[/]")
             console.print(ha.unlock(args.esn))
@@ -70,11 +173,13 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "watch":
             rt = Realtime(ha.account, args.datacenter)
             console.print(f"[bold]watching {args.datacenter}[/] (Ctrl+C to stop)")
-
-            def show(ev: LockEvent) -> None:
-                console.print(f"  [cyan]{ev}[/]")
-
-            rt.listen(on_event=show)
+            if args.raw:
+                import json
+                rt.listen(on_event=lambda e: print(json.dumps(e.raw)))
+            else:
+                rt.listen(on_event=_make_event_printer())
+        elif args.cmd == "monitor":
+            _monitor(ha, args.esn)
     except AuthError as e:
         console.print(f"[red]{e}[/]")
         return 1

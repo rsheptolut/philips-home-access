@@ -21,30 +21,58 @@ from .models import Datacenter, LockEvent
 from .session import Account
 
 
+def _int(v) -> int | None:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_event(msg: str) -> LockEvent | None:
     try:
         d = json.loads(msg)
     except ValueError:
         return None
+    ev = _classify(d)
+    if ev is not None:
+        ev.msg_id = d.get("msgId")
+        ev.timestamp = d.get("timestamp")
+    return ev
+
+
+def _classify(d: dict) -> LockEvent | None:
     func, body = d.get("func"), d.get("body") or {}
     lock_id = body.get("wfId") or body.get("lockId") or ""
+    p = body.get("eventparams") or {}
+
     if func == "setLock":
         opt = (body.get("params") or {}).get("dooropt")
         return LockEvent("setLock", lock_id,
                          state="unlocked" if opt == 1 else "locked",
                          source="remote", raw=d)
+
+    if func == "partsInfo":  # door-sensor accessory report
+        return LockEvent("parts", lock_id, battery=_int(p.get("power")), raw=d)
+
     if func == "wfevent":
         ev = body.get("eventtype")
-        p = body.get("eventparams") or {}
         if ev == "record":
-            code, src = p.get("eventCode"), p.get("eventSource")
-            if src == constants.REMOTE_EVENT_SOURCE:
-                return LockEvent("record", lock_id,
-                                 state=constants.EVENT_CODE_REMOTE.get(code),
-                                 source="remote", user_id=p.get("userID"), raw=d)
-            return LockEvent("record", lock_id,
-                             state=constants.EVENT_CODE_MANUAL.get(code),
-                             source="manual", user_id=p.get("userID"), raw=d)
+            etype, code = p.get("eventType"), p.get("eventCode")
+            if etype == constants.EVENT_TYPE_DOOR:
+                return LockEvent("door", lock_id,
+                                 state=constants.DOOR_EVENT_CODE.get(code),
+                                 user_id=p.get("userID"), raw=d)
+            # lock-bolt record (eventType 1, or anything else by default)
+            if p.get("eventSource") == constants.REMOTE_EVENT_SOURCE:
+                state, who = constants.EVENT_CODE_REMOTE.get(code), "remote"
+            else:
+                state, who = constants.EVENT_CODE_MANUAL.get(code), "manual"
+            return LockEvent("lock", lock_id, state=state, source=who,
+                             user_id=p.get("userID"), raw=d)
+        if ev == "action":  # full state snapshot -> bolt state + battery
+            return LockEvent("action", lock_id,
+                             state=constants.OPEN_STATUS.get(p.get("openStatus")),
+                             battery=_int(p.get("power")), raw=d)
         return LockEvent(f"wfevent/{ev}", lock_id, raw=d)
     return LockEvent(func or "?", lock_id, raw=d)
 
