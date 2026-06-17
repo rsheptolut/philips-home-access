@@ -13,8 +13,10 @@ from .models import Datacenter, Lock, LockEvent, TokenSet
 from .realtime import Realtime, parse_event
 from .session import Account, AuthError
 from .settings import Settings, load as load_settings
+from .tracker import ApplyResult, LockState, LockTracker
 
 __all__ = [
     "HomeAccess", "Account", "AuthError", "Realtime", "parse_event",
     "Settings", "load_settings", "Lock", "LockEvent", "TokenSet", "Datacenter",
+    "LockTracker", "LockState", "ApplyResult",
 ]

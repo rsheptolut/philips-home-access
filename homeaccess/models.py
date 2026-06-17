@@ -58,6 +58,11 @@ class Lock:
         p = self.raw.get("power")
         return int(p) if p is not None else None
 
+    @property
+    def door(self) -> str | None:
+        """Door contact state from magneticStatus (best-effort; see constants)."""
+        return constants.MAGNETIC_STATUS.get(self.raw.get("magneticStatus"))
+
     @classmethod
     def from_device_record(cls, rec: dict[str, Any], queried_from: str) -> "Lock":
         # The lock's own dataCenter field is authoritative; fall back to the

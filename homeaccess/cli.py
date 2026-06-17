@@ -27,6 +27,7 @@ from .api import HomeAccess
 from .models import Datacenter, LockEvent
 from .realtime import Realtime
 from .session import AuthError
+from .tracker import LockState, LockTracker
 
 console = Console()
 
@@ -40,18 +41,18 @@ def _print_locks(ha: HomeAccess) -> None:
                       f"battery={l.battery if l.battery is not None else '?'}")
 
 
-def _make_event_printer():
-    """Thread-safe on_event handler with principled de-dupe:
+def _make_event_printer(trackers: dict | None = None):
+    """Thread-safe on_event handler backed by per-lock state trackers.
 
-    1. Protocol re-deliveries -- the cloud emits the same event more than once
-       with a fresh msgId. Identified by identical (timestamp, body); dropped.
-    2. `action` snapshots -- the device re-reports full state at several
-       timestamps around a change. Shown only when state/battery changes.
-    Discrete events (lock, door, setLock, parts) are always shown once.
+    - drops protocol re-deliveries (same timestamp+body, only msgId differs)
+    - applies each event to the lock's tracker (newest-wins + out-of-order guard)
+    - shows discrete events (setLock/lock/door) always; `action`/`parts` only
+      when they actually change tracked state; flags out-of-order events
+    - appends the resulting tracked state so you can watch it evolve
     """
+    trackers = trackers if trackers is not None else {}
     guard = threading.Lock()
     seen: deque = deque(maxlen=64)
-    last_action = [None]
 
     def printer(ev: LockEvent) -> None:
         with guard:
@@ -59,12 +60,18 @@ def _make_event_printer():
             if key in seen:
                 return  # same event re-delivered (only msgId differed)
             seen.append(key)
-            if ev.kind == "action":
-                sig = (ev.state, ev.battery)
-                if sig == last_action[0]:
-                    return
-                last_action[0] = sig
-            console.print(f"[dim]{time.strftime('%H:%M:%S')}[/] [cyan]<< {ev}[/]")
+            tr = trackers.get(ev.lock_id)
+            if tr is None:
+                tr = trackers[ev.lock_id] = LockTracker(LockState(ev.lock_id))
+            res = tr.apply(ev)
+            ts = time.strftime("%H:%M:%S")
+            if res.stale:
+                console.print(f"[dim]{ts} << {ev} (out-of-order, ignored)[/]")
+                return
+            if not (ev.kind in ("setLock", "lock", "door") or res.changes):
+                return  # unchanged snapshot
+            console.print(f"[dim]{ts}[/] [cyan]<< {ev}[/]  "
+                          f"[dim]\\[{tr.state.summary()}][/]")
 
     return printer
 
@@ -80,6 +87,10 @@ def _monitor(ha: HomeAccess, esn_arg: str | None) -> None:
     if not locks:
         console.print("[yellow]No locks found on this account.[/]")
         return
+    # Seed a state tracker per lock from the initial device snapshot.
+    trackers = {l.esn: LockTracker(LockState(l.esn, bolt=l.open_status,
+                                             door=l.door, battery=l.battery))
+                for l in locks}
     target = esn_arg or (locks[0].esn if len(locks) == 1 else None)
 
     # Start a realtime listener for each datacenter that exposes a WebSocket.
@@ -88,7 +99,7 @@ def _monitor(ha: HomeAccess, esn_arg: str | None) -> None:
     if not ws_dcs:
         console.print("[yellow]None of your locks are in a WebSocket datacenter "
                       "(Singapore uses MQTT, not supported) -- commands only.[/]")
-    printer = _make_event_printer()
+    printer = _make_event_printer(trackers)
     for code in ws_dcs:
         rt = Realtime(ha.account, code)
         threading.Thread(target=rt.listen, kwargs={"on_event": printer},
@@ -96,6 +107,9 @@ def _monitor(ha: HomeAccess, esn_arg: str | None) -> None:
         console.print(f"[green]monitoring {code}[/] (events from any source: "
                       f"app, other devices, manual)")
 
+    console.print("[bold]initial state[/] (from device list):")
+    for l in locks:
+        console.print(f"  {l.esn}: \\[{trackers[l.esn].state.summary()}]")
     console.print(f"[bold]target lock:[/] {target or '(specify per command)'}")
     console.print(_MONITOR_HELP)
     while True:
@@ -118,9 +132,8 @@ def _monitor(ha: HomeAccess, esn_arg: str | None) -> None:
             if not esn:
                 console.print("[red]need an esn[/]")
             else:
-                l = ha.status(esn)
-                console.print(f"  {esn}: [bold]{l.open_status or '?'}[/]  "
-                              f"battery={l.battery if l.battery is not None else '?'}")
+                t = trackers.get(esn)
+                console.print(f"  {esn}: {t.state.summary() if t else 'unknown'}")
         elif cmd in ("u", "unlock", "open"):
             if not esn:
                 console.print("[red]need an esn[/]")

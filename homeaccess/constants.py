@@ -105,3 +105,8 @@ DOOR_EVENT_CODE = {1: "opened", 2: "closed"}
 
 # action snapshot / device-list openStatus mapping (deadbolt bolt state).
 OPEN_STATUS = {1: "locked", 2: "unlocked"}
+
+# device-list magneticStatus -> door contact state. Best-effort: only observed
+# closed (=2) so far; the open (=1) mapping mirrors the door eventCode and
+# self-corrects on the first door event. Verify by opening the door + `status`.
+MAGNETIC_STATUS = {1: "open", 2: "closed"}

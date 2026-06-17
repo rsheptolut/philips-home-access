@@ -69,6 +69,7 @@ Realtime(ha.account).listen(on_event=lambda e: print(e))
 | `transport.py` | `HttpClient` per datacenter: headers, token, signed/encrypted POST, 444-retry. |
 | `api.py`       | `HomeAccess` facade: discovery, routing, lock ops. |
 | `realtime.py`  | WebSocket listener + event parsing. |
+| `tracker.py`   | Optional client-side state tracker (bolt/door/battery/pending, newest-wins + out-of-order guard). |
 | `cli.py`       | Command line. |
 
 Key design point: one account login yields **one token per datacenter**; each
