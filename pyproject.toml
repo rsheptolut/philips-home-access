@@ -21,6 +21,7 @@ homeaccess = "homeaccess.cli:run"
 
 [tool.setuptools]
 packages = ["homeaccess"]
+package-dir = {homeaccess = "custom_components/philips_home_access/homeaccess"}
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

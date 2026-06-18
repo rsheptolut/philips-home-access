@@ -1,0 +1,11 @@
+{
+  "domain": "philips_home_access",
+  "name": "Philips Home Access",
+  "codeowners": ["@rsheptolut"],
+  "config_flow": true,
+  "documentation": "https://github.com/rsheptolut/philips-home-access",
+  "integration_type": "hub",
+  "iot_class": "cloud_push",
+  "requirements": ["cryptography>=42"],
+  "version": "0.1.0"
+}

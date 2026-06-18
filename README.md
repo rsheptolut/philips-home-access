@@ -6,6 +6,19 @@ discovery, lock/unlock, and realtime state — the foundation for a Home Assista
 integration. See [research/FINDINGS.md](research/FINDINGS.md) for the full
 protocol teardown.
 
+## Home Assistant integration
+
+This repo is a HACS custom integration (`custom_components/philips_home_access/`)
+that vendors the `homeaccess` client library beneath it (so it ships with the
+integration — no PyPI dependency).
+
+Install via HACS (add this repo as a custom repository → Integration), restart
+HA, then **Settings → Devices & Services → Add Integration → Philips Home Access**
+and sign in with your account email + password. Locks are **auto-discovered**;
+each becomes a device with a **lock**, a **door** binary sensor, and a **battery**
+sensor, updated in real time over the cloud WebSocket (with a 5-minute safety
+poll). `iot_class: cloud_push`; a password change triggers HA's reauth flow.
+
 ## Install
 
 ```powershell
