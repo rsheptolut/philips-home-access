@@ -1,5 +1,4 @@
-# Pin loosely; these are the only deps you need for dynamic API poking.
-requests>=2.32      # simple, ubiquitous HTTP client with Session support
-rich>=13.0          # pretty-prints JSON / tables so responses are readable
-cryptography>=42    # RSA signing + request encryption (signing.py)
-websocket-client>=1.8  # realtime lock events over WebSocket (realtime.py)
+# Runtime dependencies (see pyproject.toml for the authoritative list).
+aiohttp>=3.9        # async HTTP + WebSocket client
+cryptography>=42    # RSA signing + request encryption (crypto.py)
+rich>=13.0          # pretty CLI output (presentation only; library uses logging)

@@ -1,24 +1,27 @@
 """Realtime lock events over WebSocket (datacenters that expose ws_addr).
 
 The NA datacenter pushes lock events over a WebSocket; auth is the account token
-in the Sec-WebSocket-Protocol handshake header. Keep-alive is WS ping frames
-(not JSON). Events arrive as text frames; see parse_event() for the decoding.
+in the Sec-WebSocket-Protocol handshake header. Keep-alive uses WS ping frames
+(aiohttp's `heartbeat`). Events arrive as text frames; see parse_event().
 
 Singapore-style datacenters use MQTT instead (not implemented here).
 """
 from __future__ import annotations
 
+import asyncio
 import json
-import ssl
-import threading
-import time
-from typing import Callable
+import logging
+from typing import Awaitable, Callable
 
-import websocket
+import aiohttp
 
 from . import constants
 from .models import Datacenter, LockEvent
 from .session import Account
+
+_LOGGER = logging.getLogger(__name__)
+
+OnEvent = Callable[[LockEvent], None] | Callable[[LockEvent], Awaitable[None]]
 
 
 def _int(v) -> int | None:
@@ -64,10 +67,10 @@ def _classify(d: dict) -> LockEvent | None:
                                  user_id=p.get("userID"), raw=d)
             # lock-bolt record (eventType 1, or anything else by default)
             if p.get("eventSource") == constants.REMOTE_EVENT_SOURCE:
-                state, who = constants.EVENT_CODE_REMOTE.get(code), "remote"
+                st, who = constants.EVENT_CODE_REMOTE.get(code), "remote"
             else:
-                state, who = constants.EVENT_CODE_MANUAL.get(code), "manual"
-            return LockEvent("lock", lock_id, state=state, source=who,
+                st, who = constants.EVENT_CODE_MANUAL.get(code), "manual"
+            return LockEvent("lock", lock_id, state=st, source=who,
                              user_id=p.get("userID"), raw=d)
         if ev == "action":  # full state snapshot -> bolt state + battery
             return LockEvent("action", lock_id,
@@ -78,70 +81,41 @@ def _classify(d: dict) -> LockEvent | None:
 
 
 class Realtime:
-    def __init__(self, account: Account,
+    def __init__(self, account: Account, session: aiohttp.ClientSession,
                  datacenter_code: str = constants.DEFAULT_DATACENTER) -> None:
         self.account = account
+        self._session = session
         self.dc = Datacenter.by_code(datacenter_code)
         if not self.dc.ws_addr:
             raise RuntimeError(
                 f"Datacenter {datacenter_code} has no WebSocket "
                 f"(mqtt_addr={self.dc.mqtt_addr!r}); MQTT is not implemented.")
-        self._verify = account.settings.verify_tls
+        self._ssl = None if account.settings.verify_tls else False
 
-    def _connect(self) -> "websocket.WebSocket":
-        token = self.account.token_for(self.dc.code)
-        uid = self.account.uid
-        url = f"{self.dc.ws_addr}/?client_id=app:{uid}"
-        sslopt = {"cert_reqs": ssl.CERT_NONE} if not self._verify else None
-        return websocket.create_connection(
-            url, header=[f"Sec-WebSocket-Protocol: {token}"],
-            sslopt=sslopt, timeout=10)
-
-    def listen(self, duration: float | None = None,
-               on_event: Callable[[LockEvent], None] | None = None) -> None:
+    async def listen(self, on_event: OnEvent | None = None) -> None:
         """Stream events, calling on_event(LockEvent) for each. Auto-reconnects.
 
-        duration=None runs until interrupted; otherwise stops after N seconds.
+        Runs until cancelled. on_event may be a sync function or a coroutine
+        function. Cancel-safe: cancelling the task closes the socket cleanly.
+        (For a time-boxed run, wrap in asyncio.wait_for or cancel the task.)
         """
-        stop = threading.Event()
-        end = (time.time() + duration) if duration else None
-
-        def remaining() -> bool:
-            return (end is None or time.time() < end) and not stop.is_set()
-
-        while remaining():
+        is_coro = on_event is not None and asyncio.iscoroutinefunction(on_event)
+        while True:
             try:
-                ws = self._connect()
-            except Exception as e:  # noqa: BLE001
-                if on_event is None:
-                    print(f"connect failed: {e}; retry in 3s")
-                stop.wait(3)
-                continue
-
-            def pinger(sock=ws) -> None:
-                while not stop.is_set():
-                    try:
-                        sock.ping()
-                    except Exception:  # noqa: BLE001
-                        return
-                    stop.wait(5)
-
-            threading.Thread(target=pinger, daemon=True).start()
-            ws.settimeout(2)
-            while remaining():
-                try:
-                    msg = ws.recv()
-                except websocket.WebSocketTimeoutException:
-                    continue
-                except Exception:  # noqa: BLE001
-                    break  # dropped -> outer loop reconnects
-                if not msg:
-                    continue
-                ev = parse_event(msg)
-                if ev and on_event:
-                    on_event(ev)
-            try:
-                ws.close()
-            except Exception:  # noqa: BLE001
-                pass
-        stop.set()
+                token = await self.account.async_token_for(self.dc.code)
+                url = f"{self.dc.ws_addr}/?client_id=app:{self.account.uid}"
+                async with self._session.ws_connect(
+                    url, protocols=(token,), ssl=self._ssl, heartbeat=5,
+                ) as ws:
+                    _LOGGER.debug("ws connected to %s", self.dc.code)
+                    async for msg in ws:
+                        if msg.type != aiohttp.WSMsgType.TEXT:
+                            continue
+                        ev = parse_event(msg.data)
+                        if ev and on_event:
+                            await on_event(ev) if is_coro else on_event(ev)
+            except asyncio.CancelledError:
+                raise
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                _LOGGER.debug("ws dropped (%s); reconnecting in 3s", e)
+                await asyncio.sleep(3)

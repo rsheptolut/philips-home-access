@@ -1,33 +1,35 @@
-"""Account session: login -> per-datacenter tokens, with caching + reauth."""
+"""Account session: login -> per-datacenter tokens, with caching + reauth.
+
+Async (aiohttp). The aiohttp ClientSession is injected (the HA integration
+passes HA's shared session); the CLI/api create and own one.
+"""
 from __future__ import annotations
 
+import logging
 import time
 
-import requests
-import urllib3
+import aiohttp
 
 from . import constants, state, tokens
+from .exceptions import AuthError, HomeAccessConnectionError
 from .models import TokenSet
 from .settings import Settings
 
-
-class AuthError(RuntimeError):
-    pass
+_LOGGER = logging.getLogger(__name__)
 
 
 class Account:
     """One Philips Home Access account. Owns the TokenSet and (re)login."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, session: aiohttp.ClientSession) -> None:
         self.settings = settings
-        if not settings.verify_tls:
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        self._session = session
         cached = state.load(settings.identifier)
         self.tokenset: TokenSet | None = (
             TokenSet.from_dict(cached["tokenset"]) if cached.get("tokenset") else None)
 
     # -- login --------------------------------------------------------------
-    def login(self) -> TokenSet:
+    async def async_login(self) -> TokenSet:
         s = self.settings
         if not s.has_credentials:
             raise AuthError("Missing credentials (set HOMEACCESS_IDENTIFIER / "
@@ -41,9 +43,15 @@ class Account:
         }
         body = {"identifier": s.identifier, "credential": s.credential,
                 "areacode": s.areacode}
-        resp = requests.post(url, json=body, headers=headers,
-                             proxies=self._proxies(), verify=s.verify_tls, timeout=30)
-        data = resp.json()
+        try:
+            async with self._session.post(
+                url, json=body, headers=headers,
+                ssl=None if s.verify_tls else False,
+                proxy=s.debug_proxy or None,
+            ) as resp:
+                data = await resp.json(content_type=None)
+        except aiohttp.ClientError as e:
+            raise HomeAccessConnectionError(f"login request failed: {e}") from e
         if str(data.get("code")) != "200":
             raise AuthError(f"Login failed: {data}")
         users = data["data"]["users"]
@@ -54,26 +62,20 @@ class Account:
         )
         self.tokenset = ts
         self._persist_tokenset()
+        _LOGGER.info("Logged in as %s (datacenters: %s)",
+                     s.identifier, list(ts.tokens))
         return ts
 
     # -- token access -------------------------------------------------------
-    def token_for(self, datacenter_code: str, *, auto: bool = True) -> str:
-        """Return a valid token for a datacenter, logging in if needed."""
+    async def async_token_for(self, datacenter_code: str, *, auto: bool = True) -> str:
+        """A valid token for a datacenter, logging in if missing/expired."""
         tok = self.tokenset.token_for(datacenter_code) if self.tokenset else None
         if not tokens.is_valid(tok) and auto:
-            self.login()
+            await self.async_login()
             tok = self.tokenset.token_for(datacenter_code) if self.tokenset else None
         if not tok:
             raise AuthError(f"No token for datacenter {datacenter_code}")
         return tok
-
-    def relogin(self) -> bool:
-        """Force a re-login (used as the transport's 444 reauth callback)."""
-        try:
-            self.login()
-            return True
-        except Exception:  # noqa: BLE001
-            return False
 
     @property
     def uid(self) -> str:
@@ -82,12 +84,8 @@ class Account:
     def datacenter_codes(self) -> list[str]:
         return list(self.tokenset.tokens) if self.tokenset else []
 
-    # -- persistence (tokenset + device cache share one state file) ---------
+    # -- persistence --------------------------------------------------------
     def _persist_tokenset(self) -> None:
         data = state.load(self.settings.identifier)
         data["tokenset"] = self.tokenset.to_dict() if self.tokenset else None
         state.save(self.settings.identifier, data)
-
-    def _proxies(self) -> dict | None:
-        p = self.settings.debug_proxy
-        return {"http": p, "https": p} if p else None

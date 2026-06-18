@@ -9,14 +9,16 @@ Quick start:
     ha.unlock("RL21243710207")
 """
 from .api import HomeAccess
+from .exceptions import AuthError, HomeAccessConnectionError, HomeAccessError
 from .models import Datacenter, Lock, LockEvent, TokenSet
 from .realtime import Realtime, parse_event
-from .session import Account, AuthError
+from .session import Account
 from .settings import Settings, load as load_settings
 from .tracker import ApplyResult, LockState, LockTracker
 
 __all__ = [
-    "HomeAccess", "Account", "AuthError", "Realtime", "parse_event",
+    "HomeAccess", "Account", "Realtime", "parse_event",
     "Settings", "load_settings", "Lock", "LockEvent", "TokenSet", "Datacenter",
     "LockTracker", "LockState", "ApplyResult",
+    "HomeAccessError", "AuthError", "HomeAccessConnectionError",
 ]

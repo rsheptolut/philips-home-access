@@ -8,17 +8,19 @@ version = "0.1.0"
 description = "Reverse-engineered client for the Philips Home Access smart-lock cloud API"
 requires-python = ">=3.11"
 dependencies = [
-    "requests>=2.32",
+    "aiohttp>=3.9",
     "cryptography>=42",
-    "websocket-client>=1.8",
     "rich>=13.0",
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8.0"]
+test = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 
 [project.scripts]
-homeaccess = "homeaccess.cli:main"
+homeaccess = "homeaccess.cli:run"
 
 [tool.setuptools]
 packages = ["homeaccess"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
