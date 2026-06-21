@@ -127,3 +127,29 @@ python -m pytest tests -q     # offline; no network or captures needed
 See [research/FINDINGS.md](research/FINDINGS.md) for the full protocol teardown
 (APK → Hermes bundle → DEX/Kaadas SDK → request signing, command encryption, and
 the realtime WebSocket).
+
+## Legal & disclaimer
+
+This is an **independent, unofficial** project. It is **not affiliated with,
+authorized, sponsored, or endorsed** by Philips, Versuni, Kaadas, iRevo, Juzi
+Wulian, or any related company. "Philips" and all other product and company
+names, logos, and trademarks are the property of their respective owners and are
+used here only **nominatively**, to describe the hardware this software
+interoperates with.
+
+- **Interoperability.** It was created by reverse-engineering the official app
+  for the sole purpose of interoperability — letting hardware you own work with
+  Home Assistant. It contains **no** code, binaries, or other copyrighted
+  material from the official app; only independently written software.
+- **Your account & Terms of Service.** It talks to the vendor's cloud using
+  **your own account credentials**. Using a third-party client may violate the
+  vendor's Terms of Service. **You are solely responsible** for ensuring your use
+  complies with the terms of any account you connect, and for any consequences
+  (e.g. account suspension). Using a dedicated/secondary shared account is
+  recommended (see *Account & credential security* above).
+- **No warranty.** Provided "as is", without warranty of any kind, under the
+  [MIT License](LICENSE). It controls a **physical lock**; you assume all risk
+  for its operation, reliability, and security in your environment.
+- **Rights holders.** If you represent a rights holder and have a good-faith
+  concern about this project, please open an issue and it will be addressed
+  promptly.
