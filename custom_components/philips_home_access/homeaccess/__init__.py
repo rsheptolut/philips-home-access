@@ -1,12 +1,16 @@
-"""Philips Home Access cloud API client (reverse-engineered).
+"""Philips Home Access cloud API client (reverse-engineered, async).
 
 Quick start:
+    import asyncio
     from homeaccess import HomeAccess
-    ha = HomeAccess()          # reads settings from env / homeaccess.toml
-    ha.login()
-    for lock in ha.discover():
-        print(lock.esn, lock.nickname, lock.open_status)
-    ha.unlock("RL21243710207")
+
+    async def main():
+        async with HomeAccess() as ha:        # settings from env / homeaccess.toml
+            for lock in await ha.async_discover():
+                print(lock.esn, lock.nickname, lock.open_status, lock.battery)
+            await ha.async_unlock(lock.esn)
+
+    asyncio.run(main())
 """
 from .api import HomeAccess
 from .exceptions import AuthError, HomeAccessConnectionError, HomeAccessError

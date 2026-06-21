@@ -31,7 +31,7 @@ def test_signed_body_shape():
 
 
 def test_encrypted_command_body_block_aligned():
-    body = crypto.encrypted_command_body({"esn": "RL21243710207", "userNumberId": 0})
+    body = crypto.encrypted_command_body({"esn": "RLTEST00000000", "userNumberId": 0})
     raw = base64.b64decode(body["encryptData"])
     # RSA-1024 -> ciphertext is a whole number of 128-byte blocks (capture = 384).
     assert raw and len(raw) % 128 == 0

@@ -1,109 +1,119 @@
-# homeaccess — Philips Home Access cloud API client
+# Philips Home Access — Home Assistant integration
 
-A reverse-engineered Python client for the Philips Home Access smart lock
-(Kaadas/iRevo on the Juzi Wulian "Oneness" platform). Handles login, device
-discovery, lock/unlock, and realtime state — the foundation for a Home Assistant
-integration. See [research/FINDINGS.md](research/FINDINGS.md) for the full
-protocol teardown.
+Control and monitor your **Philips Home Access** Wi-Fi smart lock from Home
+Assistant. The lock is a Kaadas/iRevo device on the Juzi Wulian ("Oneness")
+cloud; this integration talks to that cloud directly (no extra app or bridge),
+with **real-time** state updates.
 
-## Home Assistant integration
+> Unofficial / reverse-engineered. Not affiliated with or endorsed by Philips,
+> Versuni, Kaadas, or Juzi Wulian. Use at your own risk.
 
-This repo is a HACS custom integration (`custom_components/philips_home_access/`)
-that vendors the `homeaccess` client library beneath it (so it ships with the
-integration — no PyPI dependency).
+## Features
 
-Install via HACS (add this repo as a custom repository → Integration), restart
-HA, then **Settings → Devices & Services → Add Integration → Philips Home Access**
-and sign in with your account email + password. Locks are **auto-discovered**;
-each becomes a device with a **lock**, a **door** binary sensor, and a **battery**
-sensor, updated in real time over the cloud WebSocket (with a 5-minute safety
-poll). `iot_class: cloud_push`; a password change triggers HA's reauth flow.
+- **Lock** entity — lock / unlock, with `locking…` / `unlocking…` transitions.
+- **Door** binary sensor — open / closed (the magnetic door contact).
+- **Battery** sensor — lock battery level.
+- **Real-time updates** over the cloud WebSocket — reflects app, keypad, and
+  manual operations within seconds (plus a 5-minute safety poll).
+- **Auto-discovery** — all locks on your account appear automatically; each
+  becomes its own device.
+- **Reauth** — prompts you to re-enter the password if it changes.
 
-## Install
+## Installation
+
+### HACS (recommended)
+1. HACS → ⋮ → **Custom repositories** → add this repo's URL, category **Integration**.
+2. Install **Philips Home Access**, then **restart Home Assistant**.
+
+### Manual
+Copy `custom_components/philips_home_access/` into your HA `config/custom_components/`
+and restart.
+
+## Setup
+
+**Settings → Devices & Services → Add Integration → "Philips Home Access"**, then
+enter the **email** and **password** of a Philips Home Access account, and your
+phone **area code** (used at signup, e.g. `61`). Locks are discovered
+automatically.
+
+## ⚠️ Account & credential security — please read
+
+To stay signed in, Home Assistant **stores the email and password** you enter in
+its config-entry storage (`.storage/core.config_entries`). Like every HA
+integration that needs a password, this file is **plaintext on the HA host** (and
+in backups). The account's cloud session token expires every ~2 hours, so the
+password is needed to re-login automatically — it can't be avoided here.
+
+**Recommendation: don't use your primary lock-owner account.** In the Philips
+Home Access app, **share the lock with a secondary account** (a family/guest
+user) and use *that* account's credentials in Home Assistant. You can **revoke
+its access at any time** from the app, which limits the blast radius if your HA
+host or a backup is ever exposed. (Check that the shared account's role can
+actually lock/unlock — a "family" member usually can; a "guest" may be limited.)
+
+Also: keep HA's remote access locked down as usual (strong password, 2FA). Home
+Assistant Cloud / Nabu Casa only tunnels the HA UI — it does not expose this
+integration or its credentials directly.
+
+## How it works / limitations
+
+- **Cloud-based** — requires internet; this is not a local (LAN/BLE) integration.
+- **Real-time** is delivered over a WebSocket for North-America-region locks.
+  Locks homed in a MQTT-only datacenter (e.g. Singapore) still work for commands
+  and update via the 5-minute poll, but don't get instant pushes yet.
+- **Battery** is reported coarsely by the lock (it tends to sit at 100% then step
+  down), so don't expect a smooth percentage.
+
+---
+
+# Developer / library
+
+The integration vendors a standalone async client, `homeaccess`, beneath the
+component (`custom_components/philips_home_access/homeaccess/`) — single source,
+ships with the integration, no PyPI dependency. It's also usable on its own (it
+has a CLI), which is how the protocol was developed and tested.
+
+## CLI / dev install
 
 ```powershell
-cd D:\claude\philips
-python -m venv .venv; .\.venv\Scripts\Activate.ps1
-pip install -e .            # or: pip install -r requirements.txt
-```
-
-## Configure
-
-Set credentials via environment variables:
-
-```powershell
-$env:HOMEACCESS_IDENTIFIER = 'you@example.com'
-$env:HOMEACCESS_CREDENTIAL = 'your-password'
-$env:HOMEACCESS_AREACODE   = '61'
-```
-
-…or copy `config.example.toml` to `homeaccess.toml` (gitignored) and fill it in.
-Env vars take precedence. Optional: `HOMEACCESS_DATACENTER` (pin a region),
-`HOMEACCESS_DEBUG_PROXY` (route traffic through an intercept proxy),
-`HOMEACCESS_VERIFY_TLS`.
-
-## CLI
-
-```powershell
-python -m homeaccess login            # log in, cache tokens
-python -m homeaccess devices          # discover all locks (auto-routes per datacenter)
-python -m homeaccess status  <esn>    # locked / unlocked
-python -m homeaccess unlock  <esn>    # physically unlocks
-python -m homeaccess lock    <esn>    # physically locks
-python -m homeaccess watch [datacenter]   # stream realtime events
+pip install -e .              # exposes `homeaccess` (library lives under the component)
+# credentials via env (or a gitignored homeaccess.toml):
+$env:HOMEACCESS_IDENTIFIER='you@example.com'; $env:HOMEACCESS_CREDENTIAL='...'
+python -m homeaccess devices                 # discover locks
+python -m homeaccess monitor                 # live events + lock/unlock prompt
+python -m homeaccess watch --raw             # dump raw event JSON
 ```
 
 ## Library (async)
-
-The client is `async` (aiohttp). It owns an `aiohttp.ClientSession` when used as
-a context manager, or accepts one (e.g. Home Assistant's shared session):
 
 ```python
 import asyncio
 from homeaccess import HomeAccess
 
 async def main():
-    async with HomeAccess() as ha:                 # settings from env / homeaccess.toml
+    async with HomeAccess() as ha:            # owns an aiohttp session (HA injects its own)
         for lock in await ha.async_discover():
-            print(lock.esn, lock.nickname, lock.open_status, lock.battery)
-
-        await ha.async_unlock("RL21243710207")
-        print((await ha.async_status("RL21243710207")).open_status)
-
-        # realtime events (lock/door/battery, remote vs manual); runs until cancelled
-        await ha.realtime().listen(on_event=lambda e: print(e))
+            print(lock.esn, lock.nickname, lock.open_status, lock.door, lock.battery)
+        await ha.async_unlock(lock.esn)
+        await ha.realtime().listen(on_event=lambda e: print(e))  # until cancelled
 
 asyncio.run(main())
 ```
 
-Errors are typed: `AuthError` (bad credentials → reauth), `HomeAccessConnectionError`
-(transient). The library logs via the standard `logging` module — no printing.
-
-## Architecture
+Errors are typed (`AuthError`, `HomeAccessConnectionError`); the library logs via
+`logging` (no printing — `rich` is used only by the CLI).
 
 | Module | Responsibility |
 |--------|----------------|
-| `constants.py` | Fixed protocol facts: hosts, paths, headers, datacenter map, embedded keys, event codes. |
-| `settings.py`  | User config (env / `homeaccess.toml`). |
-| `tokens.py`    | Token decode + expiry. |
-| `crypto.py`    | Request signing (`sign256`) + lock-command encryption. |
-| `exceptions.py`| `HomeAccessError` / `AuthError` / `HomeAccessConnectionError`. |
-| `state.py`     | Per-account token + device cache (gitignored `state/`). |
-| `session.py`   | async `Account`: login → per-datacenter tokens, reauth. |
-| `transport.py` | async `HttpClient` per datacenter: headers, token, signed/encrypted POST, 444-retry. |
-| `api.py`       | async `HomeAccess` facade: discovery, routing, lock ops, `realtime()`. |
-| `realtime.py`  | async WebSocket listener + event parsing. |
-| `tracker.py`   | Optional client-side state tracker (bolt/door/battery/pending, newest-wins + out-of-order guard). |
-| `cli.py`       | Command line. |
+| `constants` / `models` / `crypto` / `tokens` / `exceptions` | Pure: protocol facts, dataclasses, signing + encryption, token decode, error types. |
+| `settings` / `state` | User config (env / `homeaccess.toml`) and the token/device cache. |
+| `session` / `transport` | async `Account` (login → per-datacenter tokens, reauth) and `HttpClient` (signed/encrypted POST, 444-retry). |
+| `api` | async `HomeAccess` facade: discovery, per-datacenter routing, lock ops, `realtime()`. |
+| `realtime` / `tracker` | async WebSocket listener + event parsing; optional client-side state tracker. |
+| `cli` | Command line. |
 
-Key design point: one account login yields **one token per datacenter**; each
-lock is routed to its own datacenter's host+token automatically. Multiple locks
-share auth — only multiple *accounts* would need separate logins.
-
-### Identity scheme (for the Home Assistant integration)
-- **Config entry** = one account, keyed by `account.uid`.
-- **Device** = one lock, identified by its `esn`.
-- **Entity `unique_id`** = `f"{esn}_lock"` / `f"{esn}_door"` / `f"{esn}_battery"`.
+Identity scheme used by the HA integration: config entry = account `uid`,
+device = lock `esn`, entity `unique_id` = `{esn}_lock` / `{esn}_door` / `{esn}_battery`.
 
 ## Tests
 
@@ -112,9 +122,8 @@ pip install -e ".[test]"
 python -m pytest tests -q     # offline; no network or captures needed
 ```
 
-## Notes
+## How it was built
 
-- Tokens last ~2h; the client caches them and **re-logs-in automatically** when
-  the server rejects one (code `444`).
-- Reverse-engineering artifacts (APK, decompiled output, captures) are kept out
-  of the repo by design; only `research/FINDINGS.md` is retained.
+See [research/FINDINGS.md](research/FINDINGS.md) for the full protocol teardown
+(APK → Hermes bundle → DEX/Kaadas SDK → request signing, command encryption, and
+the realtime WebSocket).

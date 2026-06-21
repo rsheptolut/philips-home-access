@@ -2,6 +2,9 @@
 homeaccess.toml
 .env
 
+# Personal dev/deploy helpers (contain local host/IP)
+deploy-ha*.ps1
+
 # Runtime state (regenerable token + device cache)
 state/
 *.log

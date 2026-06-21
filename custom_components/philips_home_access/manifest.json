@@ -6,6 +6,7 @@
   "documentation": "https://github.com/rsheptolut/philips-home-access",
   "integration_type": "hub",
   "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/rsheptolut/philips-home-access/issues",
   "requirements": ["cryptography>=42"],
-  "version": "0.1.0"
+  "version": "1.0.0"
 }
