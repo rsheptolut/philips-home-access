@@ -67,11 +67,16 @@ class HttpClient:
     async def request(self, method: str, path: str, *, headers: dict | None = None,
                       _reauth: bool = True, **kwargs: Any) -> dict:
         url = path if path.startswith("http") else self.api_base + path
+        _LOGGER.debug("→ %s %s", method, path)
         data = await self._send(method, url, await self._headers_with_token(headers), kwargs)
+        code = data.get("code") if isinstance(data, dict) else None
+        _LOGGER.debug("← %s %s code=%s", method, path, code)
         if _reauth and self._reauth and _is_auth_failure(data):
             _LOGGER.info("Token rejected (444); re-authenticating")
             await self._reauth()  # raises AuthError / HomeAccessConnectionError
             data = await self._send(method, url, await self._headers_with_token(headers), kwargs)
+            _LOGGER.debug("← %s %s code=%s (after reauth)", method, path,
+                          data.get("code") if isinstance(data, dict) else None)
         return data
 
     async def post(self, path: str, **kw: Any) -> dict:

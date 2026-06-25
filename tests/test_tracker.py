@@ -34,3 +34,28 @@ def test_door_and_battery_tracking():
     assert tr.state.door == "closed"
     r = tr.apply(LockEvent("parts", "RL", battery=95, timestamp="3"))
     assert tr.state.battery == 95 and "battery=95" in r.changes
+
+
+def test_same_second_stale_action_does_not_regress_bolt():
+    # Fast unlock->lock: the confirming lock record and the stale pre-actuation
+    # `action` (old state) share a timestamp second. msgId breaks the tie.
+    tr = LockTracker(LockState("RL", bolt="unlocked"))
+    r1 = tr.apply(LockEvent("lock", "RL", state="locked", msg_id=3346, timestamp="1005"))
+    assert tr.state.bolt == "locked" and "lock=locked" in r1.changes
+    # stale snapshot arrives late, same second, LOWER msgId -> must be rejected
+    r2 = tr.apply(LockEvent("action", "RL", state="unlocked", msg_id=3342, timestamp="1005"))
+    assert r2.stale and not r2.changes and tr.state.bolt == "locked"
+
+
+def test_redelivery_does_not_regress_bolt():
+    tr = LockTracker(LockState("RL", bolt="unlocked"))
+    # original stale snapshot (recorded for dedup)
+    tr.apply(LockEvent("action", "RL", state="unlocked", msg_id=3340,
+                       timestamp="1004", raw={"body": {"u": 1}}))
+    tr.apply(LockEvent("lock", "RL", state="locked", msg_id=3346,
+                       timestamp="1005", raw={"body": {"l": 1}}))
+    assert tr.state.bolt == "locked"
+    # re-delivery of the stale snapshot: same timestamp+body, new (higher) msgId
+    r = tr.apply(LockEvent("action", "RL", state="unlocked", msg_id=3360,
+                           timestamp="1004", raw={"body": {"u": 1}}))
+    assert r.duplicate and not r.changes and tr.state.bolt == "locked"

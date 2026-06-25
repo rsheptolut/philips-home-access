@@ -56,6 +56,8 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
                     tr.state.door = lock.door
                 if lock.battery is not None:
                     tr.state.battery = lock.battery
+        _LOGGER.debug("poll: %d lock(s): %s", len(locks),
+                      {esn: tr.state.summary() for esn, tr in self._trackers.items()})
         return {esn: tr.state for esn, tr in self._trackers.items()}
 
     # -- realtime -----------------------------------------------------------
@@ -73,13 +75,18 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
     def _on_event(self, ev: LockEvent) -> None:
         tr = self._trackers.get(ev.lock_id)
         if tr is None:
+            _LOGGER.debug("ws event for unknown lock %s (ignored)", ev.lock_id)
             return
         res = tr.apply(ev)
-        if res.stale or not (res.changes or ev.kind in ("setLock", "lock", "door")):
-            return
-        # push the refreshed snapshot to entities
-        self.async_set_updated_data(
-            {esn: t.state for esn, t in self._trackers.items()})
+        _LOGGER.debug("ws event %-7s state=%-8s msgId=%s ts=%s -> "
+                      "stale=%s dup=%s changes=%s | %s",
+                      ev.kind, ev.state, ev.msg_id, ev.timestamp,
+                      res.stale, res.duplicate, res.changes, tr.state.summary())
+        # Push to entities only when something actually changed (changes also
+        # carries pending transitions, so setLock still surfaces locking/...).
+        if res.changes:
+            self.async_set_updated_data(
+                {esn: t.state for esn, t in self._trackers.items()})
 
     async def async_stop_realtime(self) -> None:
         for task in self._ws_tasks:

@@ -64,6 +64,22 @@ integration or its credentials directly.
 - **Battery** is reported coarsely by the lock (it tends to sit at 100% then step
   down), so don't expect a smooth percentage.
 
+## Debugging
+
+To capture detailed logs, add to `configuration.yaml` and restart:
+
+```yaml
+logger:
+  logs:
+    custom_components.philips_home_access: debug
+```
+
+Then reproduce the issue and check **Settings → System → Logs**. You'll see each
+HTTP request/response (`→ POST … / ← POST … code=…`), every raw WebSocket frame
+(`ws ← …` with its `msgId` + `timestamp`), and how the tracker applied each event
+(`stale` / `dup` / `changes` + the resulting state). That's enough to reconstruct
+event ordering and pinpoint any stuck-state issue.
+
 ---
 
 # Developer / library

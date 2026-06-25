@@ -111,6 +111,7 @@ class Realtime:
                     async for msg in ws:
                         if msg.type != aiohttp.WSMsgType.TEXT:
                             continue
+                        _LOGGER.debug("ws ← %s", msg.data[:400])
                         ev = parse_event(msg.data)
                         if ev and on_event:
                             await on_event(ev) if is_coro else on_event(ev)
