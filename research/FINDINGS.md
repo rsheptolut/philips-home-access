@@ -217,6 +217,27 @@ each change to remote-vs-manual and to a user slot. A periodic device/list poll 
 still a reasonable belt-and-suspenders fallback for HA, but not required for
 manual changes.
 
+### Event ordering & idempotency (drove the v1.0.1 stuck-state fix)
+- Top-level `timestamp` is **seconds only** -> too coarse to order events that
+  happen within the same second (a fast unlock->lock).
+- Top-level `msgId` is the cloud's **monotonic per-event sequence** for the
+  `wfevent`/`partsInfo` stream (e.g. 3340, 3341, 3343, 3346 …) — use it as the
+  tiebreaker: order by **(timestamp, msgId)**. NOTE: `setLock` frames use a
+  *different* (large, ~random) msgId space, but they only ever set the optimistic
+  "pending" hint, never the bolt, so they don't participate in facet ordering.
+  Open question: whether msgId resets across a WS reconnect (the poll self-heals
+  either way).
+- The **pre-actuation `action` snapshot carries the OLD bolt state** at the same
+  second as the command, with a LOWER msgId than the real confirming `lock`
+  record. Ordering by (timestamp, msgId) makes the confirmation win; a naive
+  `timestamp >=` guard lets the stale snapshot regress the bolt (the bug).
+- **Re-deliveries** are identical `timestamp`+`body` with a *new, higher* msgId.
+  Dedupe on (timestamp, body) BEFORE ordering, else a re-delivered stale snapshot
+  (higher msgId) would wrongly win.
+- Auto-lock (autoLockTime) wasn't separately verified to emit a `lock` record; we
+  keep `action` snapshots as a bolt source (properly ordered) so it's covered
+  regardless, and the poll backstops it.
+
 ## Tooling produced
 - `index.android.bundle` — extracted Hermes bytecode (HBC v96).
 - `bundle.decompiled.js` — 55 MB pseudo-JS (hermes-dec). Grep this for logic.

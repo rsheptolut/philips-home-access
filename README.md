@@ -144,6 +144,26 @@ See [research/FINDINGS.md](research/FINDINGS.md) for the full protocol teardown
 (APK → Hermes bundle → DEX/Kaadas SDK → request signing, command encryption, and
 the realtime WebSocket).
 
+## Roadmap / possible refinements
+
+- **MQTT realtime for non-NA datacenters.** Only WebSocket (North America) is
+  implemented; locks homed in an MQTT datacenter (e.g. Singapore) update via the
+  5-minute poll only. Adding the MQTT path would give them instant pushes too.
+- **Local/offline control via BLE.** The app has a BLE path (`createBleFrame`)
+  with a cloud-negotiated session key — a stretch goal for no-cloud operation.
+- **Official brand & store listing.** Currently the Philips icon is bundled under
+  `brand/`. Submitting to `home-assistant/brands` (shared brand) and `hacs/default`
+  gets a first-class icon and HACS-search visibility.
+- **CI:** bump `actions/checkout@v4 → v5` to clear the Node-20 deprecation warning.
+- **Reauth flow:** the config-flow reauth uses `_get_reauth_entry()` (HA 2024.12+);
+  worth a live test by changing the account password.
+- **Robustness notes:** the signing key is static/embedded — if Philips rotates it
+  in an app update, it would need re-extracting. `msgId` ordering assumes the
+  cloud's sequence doesn't reset across a WS reconnect (the poll self-heals if it
+  does). Battery is only reported coarsely by the lock.
+- **Tests:** the client library has offline unit tests; HA integration-level tests
+  (config flow, coordinator) could be added.
+
 ## Legal & disclaimer
 
 This is an **independent, unofficial** project. It is **not affiliated with,
