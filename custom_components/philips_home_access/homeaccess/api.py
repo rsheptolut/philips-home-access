@@ -39,6 +39,10 @@ class HomeAccess:
         # Device cache is loaded lazily off the event loop in _ensure().
         self._devices: list[Lock] = []
         self._cache_loaded = False
+        # Datacenters a discovery actually found locks in. Once known, we poll
+        # only these (login returns tokens for datacenters that hold no locks
+        # for us and 500/return nothing). Reset to re-scan all if they go dry.
+        self._active_codes: list[str] | None = None
 
     # -- lifecycle ----------------------------------------------------------
     async def _ensure(self) -> None:
@@ -102,18 +106,18 @@ class HomeAccess:
         return c
 
     # -- devices ------------------------------------------------------------
-    async def async_discover(self) -> list[Lock]:
-        """Query every datacenter we hold a token for; enumerate all locks."""
-        await self._ensure_logged_in()
-        codes = (self.settings.datacenter and [self.settings.datacenter]
-                 or self.account.datacenter_codes())
+    async def _scan(self, codes: list[str]) -> tuple[list[Lock], list[str]]:
+        """Query device/list across `codes`; return (locks, codes-that-had-locks)."""
         found: dict[str, Lock] = {}
+        productive: list[str] = []
         for code in codes:
             if code not in constants.DATACENTERS:
                 continue
             resp = await self.client(code).post(constants.DEVICE_LIST_PATH,
                                                 json={"uid": self.account.uid})
             wifi = (resp.get("data") or {}).get("wifiList") or []
+            if wifi:
+                productive.append(code)
             for rec in wifi:
                 lk = Lock.from_device_record(rec, code)
                 prev = found.get(lk.esn)
@@ -122,7 +126,35 @@ class HomeAccess:
                 if prev is None or (lk.datacenter_code == code
                                     and prev.datacenter_code != code):
                     found[lk.esn] = lk
-        self._devices = list(found.values())
+        return list(found.values()), productive
+
+    async def async_discover(self) -> list[Lock]:
+        """Enumerate all locks, polling only datacenters known to hold them.
+
+        Login hands back a token per datacenter, but a given account's locks
+        live in only one (or a few) of them; the rest 500 or return nothing.
+        We pin the productive datacenter(s) after the first find and poll only
+        those, re-scanning everything if they ever come back empty.
+        """
+        await self._ensure_logged_in()
+        if self.settings.datacenter:
+            codes = [self.settings.datacenter]
+        else:
+            codes = self._active_codes or self.account.datacenter_codes()
+        devices, productive = await self._scan(codes)
+
+        # Pinned set went dry (datacenter down? lock re-homed?) -> re-scan all.
+        if not devices and not self.settings.datacenter and self._active_codes:
+            _LOGGER.debug("pinned datacenter(s) %s returned no locks; re-scanning all",
+                          self._active_codes)
+            self._active_codes = None
+            devices, productive = await self._scan(self.account.datacenter_codes())
+
+        if productive and not self.settings.datacenter:
+            if productive != self._active_codes:
+                _LOGGER.debug("pinning device polling to datacenter(s): %s", productive)
+            self._active_codes = productive
+        self._devices = devices
         await self._cache_devices()
         return self._devices
 

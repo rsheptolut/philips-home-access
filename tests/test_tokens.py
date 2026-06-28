@@ -18,12 +18,14 @@ def test_decode_token_reads_claims():
     assert claims["sub"] == "x@y.com"
 
 
-def test_is_valid_respects_expiry_and_margin():
+def test_is_expired_respects_expiry_and_margin():
     fresh = _make_token({"exp": int(time.time()) + 3600})
     expired = _make_token({"exp": int(time.time()) - 10})
-    assert tokens.is_valid(fresh)
-    assert not tokens.is_valid(expired)
-    assert not tokens.is_valid(None)
-    # within the safety margin -> treated as invalid
+    assert not tokens.is_expired(fresh)
+    assert tokens.is_expired(expired)
+    assert tokens.is_expired(None)               # missing -> expired
+    # within the safety margin -> treated as expired
     soon = _make_token({"exp": int(time.time()) + 30})
-    assert not tokens.is_valid(soon, margin=60)
+    assert tokens.is_expired(soon, margin=60)
+    # opaque/undecodable token -> NOT provably expired (don't relogin)
+    assert not tokens.is_expired("not-a-decodable-token")

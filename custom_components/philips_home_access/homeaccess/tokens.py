@@ -25,11 +25,19 @@ def token_exp(token: str) -> int | None:
         return None
 
 
-def seconds_left(token: str) -> float:
+def is_expired(token: str | None, margin: float = 60) -> bool:
+    """True only if we can prove the token is expired (or about to be).
+
+    A missing token counts as expired. A token we can't decode (no readable
+    `exp`) is treated as NOT expired: re-logging in wouldn't help, since some
+    datacenters hand back an opaque token in a format we can't parse (see
+    research/FINDINGS.md). Proactively re-authing on those would re-login on
+    every poll; instead we use the token as-is and let the server reject it
+    with a 444, which the transport handles with a one-shot reauth + retry.
+    """
+    if not token:
+        return True
     exp = token_exp(token)
-    return (exp - time.time()) if exp else -1.0
-
-
-def is_valid(token: str | None, margin: float = 60) -> bool:
-    """True if the token exists and won't expire within `margin` seconds."""
-    return bool(token) and seconds_left(token) > margin
+    if exp is None:
+        return False
+    return (exp - time.time()) <= margin

@@ -77,9 +77,14 @@ class Account:
 
     # -- token access -------------------------------------------------------
     async def async_token_for(self, datacenter_code: str, *, auto: bool = True) -> str:
-        """A valid token for a datacenter, logging in if missing/expired."""
+        """A token for a datacenter, re-logging in only if it's provably expired.
+
+        We don't re-login just because a token can't be decoded (opaque
+        datacenter tokens) -- that would re-login on every poll for no gain. A
+        server-side rejection (444) still drives a one-shot reauth in transport.
+        """
         tok = self.tokenset.token_for(datacenter_code) if self.tokenset else None
-        if not tokens.is_valid(tok) and auto:
+        if auto and tokens.is_expired(tok):
             await self.async_login()
             tok = self.tokenset.token_for(datacenter_code) if self.tokenset else None
         if not tok:
