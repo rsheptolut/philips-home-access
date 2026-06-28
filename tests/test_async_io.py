@@ -2,11 +2,12 @@
 import asyncio
 import base64
 import json
+import threading
 import time
 
 import pytest
 
-from homeaccess import state
+from homeaccess import HomeAccess, state
 from homeaccess.exceptions import AuthError
 from homeaccess.models import TokenSet
 from homeaccess.realtime import Realtime
@@ -62,6 +63,45 @@ async def test_async_login_builds_tokenset():
     ts = await acct.async_login()
     assert ts.uid == "U1"
     assert ts.token_for("PhilipsNorthAmerica") == "tNA"
+
+
+async def test_state_io_runs_off_the_event_loop(monkeypatch):
+    """Regression: state.load/save must never run on the event-loop thread.
+
+    Home Assistant's watchdog flags blocking disk I/O on the loop; the state
+    helpers offload to a worker thread, so a full login + discover (which reads
+    the device cache, persists the tokenset, and rewrites the cache) must do all
+    its file I/O off-loop.
+    """
+    loop_thread = threading.get_ident()
+    on_loop: list = []
+    real_load, real_save = state.load, state.save
+
+    def spy_load(identifier):
+        if threading.get_ident() == loop_thread:
+            on_loop.append(("load", identifier))
+        return real_load(identifier)
+
+    def spy_save(identifier, data):
+        if threading.get_ident() == loop_thread:
+            on_loop.append(("save", identifier))
+        return real_save(identifier, data)
+
+    monkeypatch.setattr(state, "load", spy_load)
+    monkeypatch.setattr(state, "save", spy_save)
+
+    # A valid-shaped token (future exp) so async_token_for doesn't re-login and
+    # consume the device-list response.
+    token = base64.urlsafe_b64encode(
+        json.dumps({"uid": "U1", "exp": int(time.time()) + 3600}).encode()
+    ).decode().rstrip("=")
+    login = {"code": 200, "data": {"users": [
+        {"uid": "U1", "token": token, "code": "PhilipsNorthAmerica"}]}}
+    devices = {"code": 200, "data": {"wifiList": []}}
+    ha = HomeAccess(_settings(), session=_Session([login, devices]))
+    await ha.async_discover()
+
+    assert on_loop == [], f"blocking state I/O on the event loop: {on_loop}"
 
 
 async def test_async_login_bad_credentials_raises():

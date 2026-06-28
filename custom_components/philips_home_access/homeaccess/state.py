@@ -6,6 +6,7 @@ cache (delete it and a re-login rebuilds it).
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -45,3 +46,19 @@ def clear(identifier: str) -> None:
     p = _path(identifier)
     if p.exists():
         p.unlink()
+
+
+# -- async wrappers ---------------------------------------------------------
+# The blocking disk I/O above must not run on an event loop (Home Assistant
+# flags it). These run it in a worker thread; callers inside coroutines should
+# use these instead of the sync functions.
+async def async_load(identifier: str) -> dict[str, Any]:
+    return await asyncio.to_thread(load, identifier)
+
+
+async def async_save(identifier: str, data: dict[str, Any]) -> None:
+    await asyncio.to_thread(save, identifier, data)
+
+
+async def async_clear(identifier: str) -> None:
+    await asyncio.to_thread(clear, identifier)

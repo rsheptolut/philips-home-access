@@ -24,9 +24,18 @@ class Account:
     def __init__(self, settings: Settings, session: aiohttp.ClientSession) -> None:
         self.settings = settings
         self._session = session
-        cached = state.load(settings.identifier)
-        self.tokenset: TokenSet | None = (
-            TokenSet.from_dict(cached["tokenset"]) if cached.get("tokenset") else None)
+        # Cached tokenset is loaded lazily off the event loop (async_load_state).
+        self.tokenset: TokenSet | None = None
+        self._loaded = False
+
+    async def async_load_state(self) -> None:
+        """Load the cached tokenset from disk (once, off the event loop)."""
+        if self._loaded:
+            return
+        cached = await state.async_load(self.settings.identifier)
+        if cached.get("tokenset"):
+            self.tokenset = TokenSet.from_dict(cached["tokenset"])
+        self._loaded = True
 
     # -- login --------------------------------------------------------------
     async def async_login(self) -> TokenSet:
@@ -61,7 +70,7 @@ class Account:
             obtained=int(time.time()),
         )
         self.tokenset = ts
-        self._persist_tokenset()
+        await self._persist_tokenset()
         _LOGGER.info("Logged in as %s (datacenters: %s)",
                      s.identifier, list(ts.tokens))
         return ts
@@ -85,7 +94,7 @@ class Account:
         return list(self.tokenset.tokens) if self.tokenset else []
 
     # -- persistence --------------------------------------------------------
-    def _persist_tokenset(self) -> None:
-        data = state.load(self.settings.identifier)
+    async def _persist_tokenset(self) -> None:
+        data = await state.async_load(self.settings.identifier)
         data["tokenset"] = self.tokenset.to_dict() if self.tokenset else None
-        state.save(self.settings.identifier, data)
+        await state.async_save(self.settings.identifier, data)

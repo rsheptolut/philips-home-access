@@ -36,8 +36,9 @@ class HomeAccess:
         self._own_session = session is None
         self.account: Account | None = None
         self._clients: dict[str, HttpClient] = {}
-        cached = state.load(self.settings.identifier).get("devices") or []
-        self._devices: list[Lock] = [Lock.from_dict(d) for d in cached]
+        # Device cache is loaded lazily off the event loop in _ensure().
+        self._devices: list[Lock] = []
+        self._cache_loaded = False
 
     # -- lifecycle ----------------------------------------------------------
     async def _ensure(self) -> None:
@@ -45,6 +46,12 @@ class HomeAccess:
             self._session = aiohttp.ClientSession()
         if self.account is None:
             self.account = Account(self.settings, self._session)
+            await self.account.async_load_state()
+        if not self._cache_loaded:
+            cached = (await state.async_load(self.settings.identifier)
+                      ).get("devices") or []
+            self._devices = [Lock.from_dict(d) for d in cached]
+            self._cache_loaded = True
 
     async def aclose(self) -> None:
         if self._own_session and self._session is not None:
@@ -116,7 +123,7 @@ class HomeAccess:
                                     and prev.datacenter_code != code):
                     found[lk.esn] = lk
         self._devices = list(found.values())
-        self._cache_devices()
+        await self._cache_devices()
         return self._devices
 
     async def async_locks(self, refresh: bool = False) -> list[Lock]:
@@ -130,10 +137,10 @@ class HomeAccess:
                 return l
         raise KeyError(f"Lock {esn} not found for this account")
 
-    def _cache_devices(self) -> None:
-        data = state.load(self.settings.identifier)
+    async def _cache_devices(self) -> None:
+        data = await state.async_load(self.settings.identifier)
         data["devices"] = [l.to_dict() for l in self._devices]
-        state.save(self.settings.identifier, data)
+        await state.async_save(self.settings.identifier, data)
 
     # -- operations ---------------------------------------------------------
     async def async_unlock(self, esn: str) -> dict[str, Any]:
@@ -157,7 +164,7 @@ class HomeAccess:
             if rec.get("wifiSN") == esn:
                 updated = Lock.from_device_record(rec, l.datacenter_code)
                 self._devices = [updated if d.esn == esn else d for d in self._devices]
-                self._cache_devices()
+                await self._cache_devices()
                 return updated
         return l
 
