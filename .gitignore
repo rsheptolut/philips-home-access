@@ -22,3 +22,6 @@ venv/
 *.apk
 *.har
 captures/
+
+# Reverse-engineering archive (414 MB) - kept beside the project, never committed
+philips-research.7z
