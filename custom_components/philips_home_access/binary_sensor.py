@@ -18,7 +18,10 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator: PhilipsCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(PhilipsDoorSensor(coordinator, esn) for esn in coordinator.data)
+    # The door contact is reported on the lock, not on the sensor accessory's
+    # own record -- one door entity per lock, none for the accessory.
+    async_add_entities(PhilipsDoorSensor(coordinator, esn)
+                       for esn in coordinator.lock_esns())
 
 
 class PhilipsDoorSensor(PhilipsLockEntity, BinarySensorEntity):

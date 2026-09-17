@@ -63,6 +63,25 @@ class Lock:
         """Door contact state from magneticStatus (best-effort; see constants)."""
         return constants.MAGNETIC_STATUS.get(self.raw.get("magneticStatus"))
 
+    @property
+    def master_sn(self) -> str:
+        """The lock this device is paired to, for an accessory ("" for a lock)."""
+        return str(self.raw.get("masterSn") or "")
+
+    @property
+    def is_accessory(self) -> bool:
+        """True for a paired accessory rather than a lock in its own right.
+
+        The magnetic door sensor (pid "DLS", model W131S -- see
+        research/FINDINGS.md) is listed by device/list exactly like a lock, and
+        its `deviceType` reads "LOCK" just as the lock's does, so neither field
+        separates them. Two things do: an accessory is paired to a lock
+        (`masterSn`) and never reports a bolt (`openStatus`). Requiring both
+        keeps a genuine slave lock -- which would report a bolt -- a lock, and
+        can never swallow a top-level lock, which has no masterSn at all.
+        """
+        return bool(self.master_sn) and "openStatus" not in self.raw
+
     @classmethod
     def from_device_record(cls, rec: dict[str, Any], queried_from: str) -> "Lock":
         # The lock's own dataCenter field is authoritative; fall back to the

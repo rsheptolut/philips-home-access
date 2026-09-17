@@ -17,7 +17,9 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator: PhilipsCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(PhilipsLock(coordinator, esn) for esn in coordinator.data)
+    # Accessories (the door sensor) have no bolt -- no lock entity for them.
+    async_add_entities(PhilipsLock(coordinator, esn)
+                       for esn in coordinator.lock_esns())
 
 
 class PhilipsLock(PhilipsLockEntity, LockEntity):

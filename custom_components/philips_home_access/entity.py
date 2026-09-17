@@ -30,7 +30,7 @@ class PhilipsLockEntity(CoordinatorEntity[PhilipsCoordinator]):
     @property
     def device_info(self) -> DeviceInfo:
         lock = self.coordinator.locks.get(self._esn)
-        return DeviceInfo(
+        info = DeviceInfo(
             identifiers={(DOMAIN, self._esn)},
             name=lock.nickname if lock and lock.nickname else self._esn,
             manufacturer="Philips",
@@ -38,3 +38,8 @@ class PhilipsLockEntity(CoordinatorEntity[PhilipsCoordinator]):
             sw_version=lock.raw.get("lockSoftwareVersion") if lock else None,
             serial_number=self._esn,
         )
+        # An accessory is a device of its own (its own battery), but it belongs
+        # under the lock it is paired to rather than beside it.
+        if lock and lock.master_sn:
+            info["via_device"] = (DOMAIN, lock.master_sn)
+        return info

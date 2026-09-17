@@ -12,11 +12,13 @@ with **real-time** state updates.
 
 - **Lock** entity — lock / unlock, with `locking…` / `unlocking…` transitions.
 - **Door** binary sensor — open / closed (the magnetic door contact).
-- **Battery** sensor — lock battery level.
+- **Battery** sensors — the lock's own battery, plus the paired door sensor's
+  battery where one is fitted (they run on separate cells).
 - **Real-time updates** over the cloud WebSocket — reflects app, keypad, and
   manual operations within seconds (plus a periodic safety poll).
 - **Auto-discovery** — all locks on your account appear automatically; each
-  becomes its own device.
+  becomes its own device. A paired door sensor is recognised as an accessory
+  of its lock, not mistaken for a second lock.
 - **Reauth** — prompts you to re-enter the password if it changes.
 
 ## Installation

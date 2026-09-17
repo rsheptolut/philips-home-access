@@ -80,6 +80,17 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
                       {esn: tr.state.summary() for esn, tr in self._trackers.items()})
         return {esn: tr.state for esn, tr in self._trackers.items()}
 
+    # -- device roles -------------------------------------------------------
+    def lock_esns(self) -> list[str]:
+        """The esns that are actually locks -- accessories filtered out.
+
+        device/list returns paired accessories (the door sensor) alongside the
+        lock, so platforms that only make sense for a lock use this instead of
+        iterating every esn in `data`.
+        """
+        return [esn for esn in self.data
+                if not (esn in self.locks and self.locks[esn].is_accessory)]
+
     # -- realtime -----------------------------------------------------------
     def _ws_covers(self, locks: list[Lock]) -> bool:
         """True when a live WebSocket is carrying events for every lock."""
