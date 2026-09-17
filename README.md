@@ -62,6 +62,7 @@ integration or its credentials directly.
   WebSocket for locks homed in the North America datacenter. Where realtime is
   available the poll is just a slow (~15 min) safety-net, and it re-syncs
   immediately on every WebSocket reconnect so nothing is missed across a drop.
+  While the socket is down the poll speeds up to ~60 s until it is back.
 - **Other datacenters are poll-only.** Locks homed in an MQTT-only datacenter
   (e.g. Singapore) or the Oneness datacenter have **no push channel implemented**,
   so they fall back to a frequent (~60 s) poll. Commands still work, but state

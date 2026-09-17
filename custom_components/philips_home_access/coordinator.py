@@ -17,6 +17,7 @@ from .homeaccess import (
     LockEvent,
     LockState,
     LockTracker,
+    Realtime,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
         self.client = client
         self.locks: dict[str, Lock] = {}          # esn -> latest Lock (metadata)
         self._trackers: dict[str, LockTracker] = {}
+        self._realtimes: dict[str, Realtime] = {}   # datacenter code -> listener
         self._ws_tasks: list = []
 
     # -- safety-net poll ----------------------------------------------------
@@ -64,19 +66,30 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
                     _LOGGER.info("lock %s connectivity -> %s", lock.esn,
                                  "online" if lock.online else "OFFLINE")
                     tr.state.online = lock.online
-        # Locks whose datacenter has no realtime WS are poll-only -> poll fast;
-        # otherwise the WS is primary and the poll is a slow safety-net.
-        interval = (SLOW_POLL_INTERVAL
-                    if all(Datacenter.by_code(l.datacenter_code).ws_addr for l in locks)
-                    else FAST_POLL_INTERVAL)
+        # Slow-poll only while realtime is genuinely carrying every lock. A
+        # datacenter with no WS at all is poll-only, and so is one whose socket
+        # is currently down -- otherwise a dead listener left us on the 15-min
+        # safety-net poll, which is the slowest path, exactly when we needed
+        # the fastest one.
+        interval = SLOW_POLL_INTERVAL if self._ws_covers(locks) else FAST_POLL_INTERVAL
         if interval != self.update_interval:
-            _LOGGER.debug("poll interval -> %s", interval)
+            _LOGGER.info("poll interval -> %s (realtime %s)", interval,
+                         "up" if interval == SLOW_POLL_INTERVAL else "down")
             self.update_interval = interval
         _LOGGER.debug("poll: %d lock(s): %s", len(locks),
                       {esn: tr.state.summary() for esn, tr in self._trackers.items()})
         return {esn: tr.state for esn, tr in self._trackers.items()}
 
     # -- realtime -----------------------------------------------------------
+    def _ws_covers(self, locks: list[Lock]) -> bool:
+        """True when a live WebSocket is carrying events for every lock."""
+        for lock in locks:
+            dc = Datacenter.by_code(lock.datacenter_code)
+            rt = self._realtimes.get(dc.code)
+            if not dc.ws_addr or rt is None or not rt.connected:
+                return False
+        return True
+
     async def async_start_realtime(self) -> None:
         """One WebSocket listener per WebSocket-capable datacenter."""
         locks = await self.client.async_locks()
@@ -84,12 +97,26 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
                         if Datacenter.by_code(l.datacenter_code).ws_addr})
         for code in codes:
             rt = self.client.realtime(code)
+            self._realtimes[code] = rt
             self._ws_tasks.append(self.hass.async_create_background_task(
-                rt.listen(on_event=self._on_event, on_connect=self._on_ws_connect),
+                rt.listen(on_event=self._on_event, on_connect=self._on_ws_connect,
+                          on_disconnect=self._on_ws_disconnect),
                 name=f"{DOMAIN}_ws_{code}"))
 
     async def _on_ws_connect(self) -> None:
         """Resync on every (re)connect so a drop's missed events are caught."""
+        await self.async_request_refresh()
+
+    async def _on_ws_disconnect(self) -> None:
+        """Refresh now so the interval drops to the fast poll while we're blind.
+
+        The poll is a weak substitute for realtime: it can refresh the bolt from
+        device/list, but only on its own interval, and live door open/close
+        arrives *only* as eventType-4 records over the WS (device/list's
+        magneticStatus is best-effort -- see research/FINDINGS.md). So while the
+        socket is down the door stops moving and the bolt goes stale; poll as
+        hard as we can until it is back.
+        """
         await self.async_request_refresh()
 
     @callback
@@ -113,3 +140,4 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
         for task in self._ws_tasks:
             task.cancel()
         self._ws_tasks.clear()
+        self._realtimes.clear()

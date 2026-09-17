@@ -11,17 +11,26 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Awaitable, Callable
 
 import aiohttp
 
 from . import constants
+from .exceptions import HomeAccessError
 from .models import Datacenter, LockEvent
 from .session import Account
 
 _LOGGER = logging.getLogger(__name__)
 
 OnEvent = Callable[[LockEvent], None] | Callable[[LockEvent], Awaitable[None]]
+
+# Reconnect backoff. A failing re-login must not hammer the cloud, so the delay
+# doubles up to RECONNECT_DELAY_MAX; a session that stayed up for at least
+# STABLE_AFTER seconds counts as healthy and resets it.
+RECONNECT_DELAY = 3
+RECONNECT_DELAY_MAX = 300
+STABLE_AFTER = 60
 
 
 def _int(v) -> int | None:
@@ -93,26 +102,37 @@ class Realtime:
                 f"Datacenter {datacenter_code} has no WebSocket "
                 f"(mqtt_addr={self.dc.mqtt_addr!r}); MQTT is not implemented.")
         self._ssl = None if account.settings.verify_tls else False
+        # True only while a socket is open; the coordinator reads this to decide
+        # whether realtime is actually covering the locks.
+        self.connected = False
 
     async def listen(self, on_event: OnEvent | None = None,
-                     on_connect: Callable[[], Awaitable[None]] | None = None) -> None:
+                     on_connect: Callable[[], Awaitable[None]] | None = None,
+                     on_disconnect: Callable[[], Awaitable[None]] | None = None,
+                     ) -> None:
         """Stream events, calling on_event(LockEvent) for each. Auto-reconnects.
 
-        Runs until cancelled. on_event may be a sync function or a coroutine
-        function. on_connect (a coroutine function) is awaited after each
-        (re)connect -- use it to resync state that changed while the socket was
-        down. Cancel-safe: cancelling the task closes the socket cleanly.
+        Runs until cancelled -- no failure short of cancellation ends the loop.
+        on_event may be a sync function or a coroutine function. on_connect and
+        on_disconnect (coroutine functions) are awaited after each (re)connect
+        and on each drop of a socket that was up -- use them to resync state
+        that changed while the socket was down and to fall back to polling
+        while it is. Cancel-safe: cancelling the task closes the socket cleanly.
         (For a time-boxed run, wrap in asyncio.wait_for or cancel the task.)
         """
         is_coro = on_event is not None and asyncio.iscoroutinefunction(on_event)
+        delay = RECONNECT_DELAY
         while True:
+            connected_at: float | None = None
             try:
                 token = await self.account.async_token_for(self.dc.code)
                 url = f"{self.dc.ws_addr}/?client_id=app:{self.account.uid}"
                 async with self._session.ws_connect(
                     url, protocols=(token,), ssl=self._ssl, heartbeat=5,
                 ) as ws:
-                    _LOGGER.debug("ws connected to %s", self.dc.code)
+                    connected_at = time.monotonic()
+                    self.connected = True
+                    _LOGGER.info("ws connected to %s", self.dc.code)
                     if on_connect is not None:
                         await on_connect()
                     async for msg in ws:
@@ -123,7 +143,32 @@ class Realtime:
                         if ev and on_event:
                             await on_event(ev) if is_coro else on_event(ev)
             except asyncio.CancelledError:
+                self.connected = False
                 raise
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                _LOGGER.debug("ws dropped (%s); reconnecting in 3s", e)
-                await asyncio.sleep(3)
+                _LOGGER.debug("ws %s dropped (%s)", self.dc.code, e)
+            except HomeAccessError as e:
+                # A re-login that fails (expired token + a cloud blip) raises
+                # AuthError/HomeAccessConnectionError. These are not
+                # aiohttp.ClientError, so they used to escape listen() and kill
+                # the task for good -- realtime never came back until HA was
+                # restarted, silently, while the safety-net poll carried on.
+                _LOGGER.warning("ws %s auth/connection failure (%s); will retry",
+                                self.dc.code, e)
+            except Exception:  # noqa: BLE001 - the listener must outlive anything
+                _LOGGER.exception("ws %s unexpected error; will retry", self.dc.code)
+
+            if self.connected:
+                self.connected = False
+                _LOGGER.info("ws disconnected from %s", self.dc.code)
+                if on_disconnect is not None:
+                    await on_disconnect()
+
+            # A session that lasted is evidence the endpoint is healthy: retry
+            # promptly. Anything shorter backs off, so a persistent failure
+            # (bad credentials, cloud outage) settles into a slow retry.
+            if connected_at is not None and time.monotonic() - connected_at >= STABLE_AFTER:
+                delay = RECONNECT_DELAY
+            _LOGGER.debug("ws %s reconnecting in %ss", self.dc.code, delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, RECONNECT_DELAY_MAX)
