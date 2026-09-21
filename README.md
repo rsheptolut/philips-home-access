@@ -10,7 +10,10 @@ with **real-time** state updates.
 
 ## Features
 
-- **Lock** entity — lock / unlock, with `locking…` / `unlocking…` transitions.
+- **Lock** entity — lock / unlock, with `locking…` / `unlocking…` transitions,
+  when the device advertises remote-control support.
+- **Read-only lock state** — devices that report `isRemoteUnlock=0` use a lock
+  binary sensor instead, so Home Assistant does not offer unsupported actions.
 - **Door** binary sensor — open / closed (the magnetic door contact).
 - **Battery** sensors — the lock's own battery, plus the paired door sensor's
   battery where one is fitted (they run on separate cells).
@@ -67,10 +70,12 @@ integration or its credentials directly.
   While the socket is down the poll speeds up to ~60 s until it is back.
 - **Other datacenters are poll-only.** Locks homed in an MQTT-only datacenter
   (e.g. Singapore) or the Oneness datacenter have **no push channel implemented**,
-  so they fall back to a frequent (~60 s) poll. Commands still work, but state
-  updates lag by up to that interval and **door open/close — an event-driven
-  signal — may not be reliably reflected** without realtime. MQTT support is a
-  roadmap item; it can't be built/tested without access to such an account.
+  so they fall back to a frequent (~60 s) poll. State updates lag by up to that
+  interval and **door open/close — an event-driven signal — may not be reliably
+  reflected** without realtime. Remote commands are shown only when the device
+  advertises support; devices reporting `isRemoteUnlock=0` remain read-only.
+  MQTT support is a roadmap item; it can't be built/tested without access to
+  such an account.
 - **Commands are verified on North America only** — other datacenters' command
   hosts are untested.
 - **Re-authentication uses your password.** The cloud session token lasts ~2 h
@@ -145,6 +150,8 @@ Errors are typed (`AuthError`, `HomeAccessConnectionError`); the library logs vi
 
 Identity scheme used by the HA integration: config entry = account `uid`,
 device = lock `esn`, entity `unique_id` = `{esn}_lock` / `{esn}_door` / `{esn}_battery`.
+For a read-only device, the lock-state binary sensor uses `{esn}_lock_state`
+instead of `{esn}_lock`.
 
 ## Tests
 

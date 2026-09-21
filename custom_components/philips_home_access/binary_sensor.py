@@ -1,4 +1,4 @@
-"""Binary sensor platform: the door contact (open/closed)."""
+"""Binary sensor platform: door contacts and read-only lock state."""
 from __future__ import annotations
 
 from homeassistant.components.binary_sensor import (
@@ -20,8 +20,17 @@ async def async_setup_entry(
     coordinator: PhilipsCoordinator = hass.data[DOMAIN][entry.entry_id]
     # The door contact is reported on the lock, not on the sensor accessory's
     # own record -- one door entity per lock, none for the accessory.
-    async_add_entities(PhilipsDoorSensor(coordinator, esn)
-                       for esn in coordinator.lock_esns())
+    entities: list[BinarySensorEntity] = [
+        PhilipsDoorSensor(coordinator, esn) for esn in coordinator.lock_esns()
+    ]
+    # LockEntity always exposes lock/unlock services. A LOCK binary sensor is
+    # the truthful read-only representation when the device record reports
+    # isRemoteUnlock=0 (on = unlocked, off = locked in Home Assistant).
+    entities.extend(
+        PhilipsLockStateSensor(coordinator, esn)
+        for esn in coordinator.read_only_lock_esns()
+    )
+    async_add_entities(entities)
 
 
 class PhilipsDoorSensor(PhilipsLockEntity, BinarySensorEntity):
@@ -36,3 +45,19 @@ class PhilipsDoorSensor(PhilipsLockEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         st = self._lock_state
         return st.door == "open" if st and st.door else None
+
+
+class PhilipsLockStateSensor(PhilipsLockEntity, BinarySensorEntity):
+    """Read-only bolt state for devices that cannot be remotely controlled."""
+
+    _attr_device_class = BinarySensorDeviceClass.LOCK
+    _attr_name = "Lock"
+
+    def __init__(self, coordinator: PhilipsCoordinator, esn: str) -> None:
+        super().__init__(coordinator, esn)
+        self._attr_unique_id = f"{esn}_lock_state"
+
+    @property
+    def is_on(self) -> bool | None:
+        st = self._lock_state
+        return st.bolt == "unlocked" if st and st.bolt else None
