@@ -8,7 +8,12 @@ import time
 import pytest
 
 from homeaccess import HomeAccess, state, tokens
-from homeaccess.exceptions import AuthError
+from homeaccess.exceptions import (
+    AuthError,
+    CommandError,
+    HomeAccessConnectionError,
+    HomeAccessResponseError,
+)
 from homeaccess.models import TokenSet
 from homeaccess.realtime import Realtime
 from homeaccess.session import Account
@@ -25,6 +30,7 @@ def _isolate_state(tmp_path, monkeypatch):
 class _Resp:
     def __init__(self, data):
         self._data = data
+        self.status = 200
 
     async def __aenter__(self):
         return self
@@ -35,6 +41,22 @@ class _Resp:
     async def json(self, content_type=None):
         return self._data
 
+    async def text(self, errors="strict"):
+        return json.dumps(self._data)
+
+
+class _NotJsonResp(_Resp):
+    """A non-JSON reply, e.g. the HTML 404 page a host serves for an unknown path."""
+    def __init__(self, text, status=404):
+        super().__init__(None)
+        self._text, self.status = text, status
+
+    async def json(self, content_type=None):
+        return json.loads(self._text)   # raises ValueError, like aiohttp/orjson
+
+    async def text(self, errors="strict"):
+        return self._text
+
 
 class _Session:
     """Returns queued JSON bodies for post()/request() in order."""
@@ -43,12 +65,12 @@ class _Session:
         self.calls = []
 
     def post(self, url, **kw):
-        self.calls.append(("POST", url, kw))
-        return _Resp(self._responses.pop(0))
+        return self.request("POST", url, **kw)
 
     def request(self, method, url, **kw):
         self.calls.append((method, url, kw))
-        return _Resp(self._responses.pop(0))
+        r = self._responses.pop(0)
+        return r if isinstance(r, _Resp) else _Resp(r)
 
 
 def _settings():
@@ -258,6 +280,49 @@ async def test_transport_reauths_once_on_444():
     http = HttpClient("https://x", token_provider=token_provider, reauth=reauth, session=sess)
     out = await http.post_signed("/p", {"esn": "RL"})
     assert out["code"] == 200 and reauths == [1]
+
+
+async def _tok():
+    return "tok"
+
+
+async def test_transport_non_json_reply_raises_typed_error():
+    # Issue #1: a command host answered open-device with a non-JSON 404 page,
+    # which escaped as a raw orjson.JSONDecodeError.
+    sess = _Session([_NotJsonResp("<html>404 Not Found</html>")])
+    http = HttpClient("https://x", token_provider=_tok, session=sess)
+    with pytest.raises(HomeAccessResponseError, match=r"HTTP 404.*404 Not Found"):
+        await http.post("/v3/device/open-device")
+    # still a connection error, so the coordinator's poll handling is unchanged
+    assert issubclass(HomeAccessResponseError, HomeAccessConnectionError)
+
+
+async def test_transport_empty_or_non_object_reply_raises_typed_error():
+    for body in (None, ["not", "an", "object"]):
+        http = HttpClient("https://x", token_provider=_tok, session=_Session([_Resp(body)]))
+        with pytest.raises(HomeAccessResponseError):
+            await http.post("/p")
+
+
+def _ha_with_lock(command_response):
+    login = {"code": 200, "data": {"users": [
+        {"uid": "U1", "token": _decodable_token(), "code": "PhilipsNorthAmerica"}]}}
+    sess = _Session([login, _devlist("RL"), command_response])
+    return HomeAccess(_settings(), session=sess), sess
+
+
+async def test_command_accepted_on_code_200():
+    ha, sess = _ha_with_lock({"code": 200, "msg": "success"})
+    await ha.async_discover()
+    assert (await ha.async_unlock("RL"))["code"] == 200
+    assert sess.calls[-1][1].endswith("/v3/device/open-device")
+
+
+async def test_command_refused_raises_instead_of_passing_for_success():
+    ha, _ = _ha_with_lock({"code": 500, "msg": "device not support"})
+    await ha.async_discover()
+    with pytest.raises(CommandError, match="device not support"):
+        await ha.async_lock("RL")
 
 
 # --- WebSocket -------------------------------------------------------------

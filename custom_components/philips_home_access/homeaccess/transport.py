@@ -1,6 +1,7 @@
 """HTTP transport for one datacenter: headers, token, signing, 444-reauth.
 
-Async (aiohttp). Returns parsed JSON dicts (every endpoint responds JSON).
+Async (aiohttp). Returns parsed JSON dicts; anything else (an HTML error page,
+an empty body) raises HomeAccessResponseError.
 `token_provider` and `reauth` are awaitables supplied by the session, so a fresh
 token (or a re-login) is picked up transparently.
 """
@@ -12,7 +13,7 @@ from typing import Any, Awaitable, Callable
 import aiohttp
 
 from . import constants, crypto
-from .exceptions import HomeAccessConnectionError
+from .exceptions import HomeAccessConnectionError, HomeAccessResponseError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -60,7 +61,17 @@ class HttpClient:
                 method, url, headers=headers, ssl=self._ssl, proxy=self._proxy,
                 **kwargs,
             ) as resp:
-                return await resp.json(content_type=None)
+                try:
+                    data = await resp.json(content_type=None)
+                except ValueError:  # json and orjson decode errors are ValueErrors
+                    data = None
+                if not isinstance(data, dict):
+                    # e.g. a 404 HTML page from a host that lacks this endpoint
+                    snippet = (await resp.text(errors="replace"))[:120]
+                    raise HomeAccessResponseError(
+                        f"{method} {url} -> HTTP {resp.status}, "
+                        f"not a JSON object: {snippet!r}")
+                return data
         except aiohttp.ClientError as e:
             raise HomeAccessConnectionError(f"{method} {url} failed: {e}") from e
 

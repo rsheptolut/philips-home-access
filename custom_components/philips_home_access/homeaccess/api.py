@@ -19,6 +19,7 @@ from typing import Any
 import aiohttp
 
 from . import constants, state
+from .exceptions import CommandError
 from .models import Lock
 from .realtime import Realtime
 from .session import Account
@@ -192,15 +193,26 @@ class HomeAccess:
     # -- operations ---------------------------------------------------------
     async def async_unlock(self, esn: str) -> dict[str, Any]:
         """open-device -> physically UNLOCKS the lock."""
-        l = await self.async_get(esn)
-        return await self.client(l.datacenter_code).post_encrypted(
-            constants.OPEN_DEVICE_PATH, {"esn": esn, "userNumberId": l.user_number_id})
+        return await self._command(esn, constants.OPEN_DEVICE_PATH)
 
     async def async_lock(self, esn: str) -> dict[str, Any]:
         """close-device -> physically LOCKS the lock."""
+        return await self._command(esn, constants.CLOSE_DEVICE_PATH)
+
+    async def _command(self, esn: str, path: str) -> dict[str, Any]:
+        """Send an encrypted open/close; raise CommandError unless code 200.
+
+        Accepted commands answer code 200 (observed live); anything else is the
+        cloud refusing, and must not pass for success.
+        """
         l = await self.async_get(esn)
-        return await self.client(l.datacenter_code).post_encrypted(
-            constants.CLOSE_DEVICE_PATH, {"esn": esn, "userNumberId": l.user_number_id})
+        resp = await self.client(l.datacenter_code).post_encrypted(
+            path, {"esn": esn, "userNumberId": l.user_number_id})
+        if str(resp.get("code")) != "200":
+            raise CommandError(
+                f"{path} for {esn} via {l.datacenter_code} refused: "
+                f"code={resp.get('code')!r} msg={resp.get('msg')!r}")
+        return resp
 
     async def async_status(self, esn: str) -> Lock:
         """Refresh and return the lock (use .open_status / .door / .battery)."""

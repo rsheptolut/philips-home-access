@@ -13,7 +13,13 @@ Quick start:
     asyncio.run(main())
 """
 from .api import HomeAccess
-from .exceptions import AuthError, HomeAccessConnectionError, HomeAccessError
+from .exceptions import (
+    AuthError,
+    CommandError,
+    HomeAccessConnectionError,
+    HomeAccessError,
+    HomeAccessResponseError,
+)
 from .models import Datacenter, Lock, LockEvent, TokenSet
 from .realtime import Realtime, parse_event
 from .session import Account
@@ -25,4 +31,5 @@ __all__ = [
     "Settings", "load_settings", "Lock", "LockEvent", "TokenSet", "Datacenter",
     "LockTracker", "LockState", "ApplyResult",
     "HomeAccessError", "AuthError", "HomeAccessConnectionError",
+    "HomeAccessResponseError", "CommandError",
 ]
