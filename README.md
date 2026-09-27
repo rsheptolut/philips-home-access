@@ -1,87 +1,67 @@
 # Philips Home Access — Home Assistant integration
 
-Control and monitor your **Philips Home Access** Wi-Fi smart lock from Home
-Assistant. The lock is a Kaadas/iRevo device on the Juzi Wulian ("Oneness")
-cloud; this integration talks to that cloud directly (no extra app or bridge),
-with **real-time** state updates.
+Control and monitor a Philips Home Access Wi-Fi smart lock from Home Assistant.
+The lock is a Kaadas/iRevo device on the Juzi Wulian ("Oneness") cloud; this
+integration talks to that cloud directly — no extra app or bridge — with
+real-time state updates.
 
-> Unofficial / reverse-engineered. Not affiliated with or endorsed by Philips,
-> Versuni, Kaadas, or Juzi Wulian. Use at your own risk.
+Unofficial and reverse-engineered; not affiliated with Philips, Versuni, Kaadas
+or Juzi Wulian. See [Legal](#legal).
 
 ## Features
 
-- **Lock** entity — lock / unlock, with `locking…` / `unlocking…` transitions.
-- **Door** binary sensor — open / closed (the magnetic door contact).
-- **Battery** sensors — the lock's own battery, plus the paired door sensor's
-  battery where one is fitted (they run on separate cells).
-- **Real-time updates** over the cloud WebSocket — reflects app, keypad, and
-  manual operations within seconds (plus a periodic safety poll).
-- **Auto-discovery** — all locks on your account appear automatically; each
-  becomes its own device. A paired door sensor is recognised as an accessory
-  of its lock, not mistaken for a second lock.
-- **Reauth** — prompts you to re-enter the password if it changes.
+- **Lock** — lock/unlock, with `locking…` / `unlocking…` transitions.
+- **Door** binary sensor — open/closed, from the magnetic contact.
+- **Battery** — the lock's, plus the door sensor's own where one is fitted.
+- **Real-time updates** over the cloud WebSocket: app, keypad and manual
+  operations appear within seconds, backed by a periodic poll.
+- **Auto-discovery** — every lock on the account becomes its own device. A
+  paired door sensor is treated as an accessory of its lock, not a second lock.
+- **Reauth** — prompts for the password if it changes.
 
-## Installation
+## Install
 
-### HACS (recommended)
-1. HACS → ⋮ → **Custom repositories** → add this repo's URL, category **Integration**.
-2. Install **Philips Home Access**, then **restart Home Assistant**.
+**HACS:** ⋮ → Custom repositories → add this repo, category Integration →
+install → restart Home Assistant.
 
-### Manual
-Copy `custom_components/philips_home_access/` into your HA `config/custom_components/`
-and restart.
+**Manual:** copy `custom_components/philips_home_access/` into
+`config/custom_components/` and restart.
 
-## Setup
+Then go to Settings → Devices & Services → Add Integration → Philips Home
+Access and enter the account email, password, and the phone area code used at
+signup (e.g. `61`). Locks are discovered automatically.
 
-**Settings → Devices & Services → Add Integration → "Philips Home Access"**, then
-enter the **email** and **password** of a Philips Home Access account, and your
-phone **area code** (used at signup, e.g. `61`). Locks are discovered
-automatically.
+### Use a secondary account
 
-## ⚠️ Account & credential security — please read
+Home Assistant stores the password in `.storage/core.config_entries` as
+plaintext, as it does for every integration that needs one. The cloud session
+token expires every ~2 h and there is no refresh token, so the password is
+needed to re-login.
 
-To stay signed in, Home Assistant **stores the email and password** you enter in
-its config-entry storage (`.storage/core.config_entries`). Like every HA
-integration that needs a password, this file is **plaintext on the HA host** (and
-in backups). The account's cloud session token expires every ~2 hours, so the
-password is needed to re-login automatically — it can't be avoided here.
+Share the lock with a family/guest account in the Philips app and give Home
+Assistant those credentials instead — you can revoke them at any time without
+touching your main account. Check the shared account can actually lock and
+unlock: "family" usually can, "guest" may not.
 
-**Recommendation: don't use your primary lock-owner account.** In the Philips
-Home Access app, **share the lock with a secondary account** (a family/guest
-user) and use *that* account's credentials in Home Assistant. You can **revoke
-its access at any time** from the app, which limits the blast radius if your HA
-host or a backup is ever exposed. (Check that the shared account's role can
-actually lock/unlock — a "family" member usually can; a "guest" may be limited.)
-
-Also: keep HA's remote access locked down as usual (strong password, 2FA). Home
-Assistant Cloud / Nabu Casa only tunnels the HA UI — it does not expose this
-integration or its credentials directly.
+Also secure remote access to Home Assistant itself (strong password, 2FA).
+Home Assistant Cloud only tunnels the HA UI; it doesn't expose this
+integration or its stored credentials directly.
 
 ## How it works / limitations
 
-- **Cloud-based** — requires internet; this is not a local (LAN/BLE) integration.
-- **Real-time is North-America only.** Lock state is pushed instantly over a
-  WebSocket for locks homed in the North America datacenter. Where realtime is
-  available the poll is just a slow (~15 min) safety-net, and it re-syncs
-  immediately on every WebSocket reconnect so nothing is missed across a drop.
-  While the socket is down the poll speeds up to ~60 s until it is back.
-- **Other datacenters are poll-only.** Locks homed in an MQTT-only datacenter
-  (e.g. Singapore) or the Oneness datacenter have **no push channel implemented**,
-  so they fall back to a frequent (~60 s) poll. Commands still work, but state
-  updates lag by up to that interval and **door open/close — an event-driven
-  signal — may not be reliably reflected** without realtime. MQTT support is a
-  roadmap item; it can't be built/tested without access to such an account.
-- **Commands are verified on North America only** — other datacenters' command
+- **Cloud-based** — needs internet. This is not a local (LAN/BLE) integration.
+- **Real-time is North America only.** Locks homed there get instant WebSocket
+  pushes, with the poll as a 15-minute safety net that re-syncs on every
+  reconnect. If the socket drops, or any device goes offline, polling speeds
+  up to 60 s until it is back.
+- **Other datacenters are poll-only.** Singapore (MQTT) and Oneness have no push
+  channel implemented, so they poll every 60 s. Commands still work, but state
+  lags, and door open/close — an event-driven signal — may not show up reliably.
+- **Commands are verified on North America only.** Other datacenters' command
   hosts are untested.
-- **Re-authentication uses your password.** The cloud session token lasts ~2 h
-  and there's no refresh token, so the integration re-logs-in with the stored
-  password when it expires (see *Account & credential security* above).
-- **Battery** is reported coarsely by the lock (it tends to sit at 100% then step
-  down), so don't expect a smooth percentage.
+- **Battery is coarse** — it tends to sit at 100%, then step down.
 
 ## Debugging
-
-To capture detailed logs, add to `configuration.yaml` and restart:
 
 ```yaml
 logger:
@@ -89,11 +69,10 @@ logger:
     custom_components.philips_home_access: debug
 ```
 
-Then reproduce the issue and check **Settings → System → Logs**. You'll see each
-HTTP request/response (`→ POST … / ← POST … code=…`), every raw WebSocket frame
-(`ws ← …` with its `msgId` + `timestamp`), and how the tracker applied each event
-(`stale` / `dup` / `changes` + the resulting state). That's enough to reconstruct
-event ordering and pinpoint any stuck-state issue.
+Restart, reproduce, then check Settings → System → Logs. You get each HTTP
+request/response, every raw WebSocket frame with its `msgId` and `timestamp`,
+and how the tracker applied each event (`stale` / `dup` / `changes`, plus the
+resulting state) — enough to reconstruct event ordering.
 
 ---
 
@@ -101,8 +80,8 @@ event ordering and pinpoint any stuck-state issue.
 
 The integration vendors a standalone async client, `homeaccess`, beneath the
 component (`custom_components/philips_home_access/homeaccess/`) — single source,
-ships with the integration, no PyPI dependency. It's also usable on its own (it
-has a CLI), which is how the protocol was developed and tested.
+ships with the integration, no PyPI dependency. It is also usable on its own via
+a CLI, which is how the protocol was developed and tested.
 
 ## CLI / dev install
 
@@ -143,8 +122,8 @@ Errors are typed (`AuthError`, `HomeAccessConnectionError`); the library logs vi
 | `realtime` / `tracker` | async WebSocket listener + event parsing; optional client-side state tracker. |
 | `cli` | Command line. |
 
-Identity scheme used by the HA integration: config entry = account `uid`,
-device = lock `esn`, entity `unique_id` = `{esn}_lock` / `{esn}_door` / `{esn}_battery`.
+Identity scheme used by the HA integration: config entry = account `uid`, device
+= lock `esn`, entity `unique_id` = `{esn}_lock` / `{esn}_door` / `{esn}_battery`.
 
 ## Tests
 
@@ -159,48 +138,37 @@ See [research/FINDINGS.md](research/FINDINGS.md) for the full protocol teardown
 (APK → Hermes bundle → DEX/Kaadas SDK → request signing, command encryption, and
 the realtime WebSocket).
 
-## Roadmap / possible refinements
+## Roadmap
 
-- **MQTT realtime for non-NA datacenters.** Only WebSocket (North America) is
-  implemented; locks homed in an MQTT datacenter (e.g. Singapore) update via a
-  frequent poll only. Adding the MQTT path would give them instant pushes too.
-- **Local/offline control via BLE.** The app has a BLE path (`createBleFrame`)
-  with a cloud-negotiated session key — a stretch goal for no-cloud operation.
-- **Official brand & store listing.** Currently the Philips icon is bundled under
-  `brand/`. Submitting to `home-assistant/brands` (shared brand) and `hacs/default`
-  gets a first-class icon and HACS-search visibility.
-- **CI:** bump `actions/checkout@v4 → v5` to clear the Node-20 deprecation warning.
-- **Reauth flow:** the config-flow reauth uses `_get_reauth_entry()` (HA 2024.12+);
-  worth a live test by changing the account password.
-- **Robustness notes:** the signing key is static/embedded — if Philips rotates it
-  in an app update, it would need re-extracting. `msgId` ordering assumes the
-  cloud's sequence doesn't reset across a WS reconnect (the poll self-heals if it
-  does). Battery is only reported coarsely by the lock.
-- **Tests:** the client library has offline unit tests; HA integration-level tests
-  (config flow, coordinator) could be added.
+- **MQTT realtime** for non-NA datacenters, so Singapore-homed locks get pushes
+  too. It can't be built or tested without access to such an account.
+- **Local control over BLE.** The app has a BLE path (`createBleFrame`) with a
+  cloud-negotiated session key — a stretch goal for no-cloud operation.
+- **Brand and store listing.** Submitting to `home-assistant/brands` and
+  `hacs/default` would get a first-class icon and HACS search visibility.
+- **HA-level tests** for the config flow and coordinator; the client library
+  already has offline unit tests.
 
-## Legal & disclaimer
+Known fragility: the signing key is static and embedded, so if Philips rotates it
+in an app update it would need re-extracting. `msgId` ordering assumes the
+cloud's sequence doesn't reset across a WebSocket reconnect (the poll self-heals
+if it does).
 
-This is an **independent, unofficial** project. It is **not affiliated with,
-authorized, sponsored, or endorsed** by Philips, Versuni, Kaadas, iRevo, Juzi
-Wulian, or any related company. "Philips" and all other product and company
-names, logos, and trademarks are the property of their respective owners and are
-used here only **nominatively**, to describe the hardware this software
-interoperates with.
+## Legal
 
-- **Interoperability.** It was created by reverse-engineering the official app
-  for the sole purpose of interoperability — letting hardware you own work with
-  Home Assistant. It contains **no** code, binaries, or other copyrighted
-  material from the official app; only independently written software.
-- **Your account & Terms of Service.** It talks to the vendor's cloud using
-  **your own account credentials**. Using a third-party client may violate the
-  vendor's Terms of Service. **You are solely responsible** for ensuring your use
-  complies with the terms of any account you connect, and for any consequences
-  (e.g. account suspension). Using a dedicated/secondary shared account is
-  recommended (see *Account & credential security* above).
-- **No warranty.** Provided "as is", without warranty of any kind, under the
-  [MIT License](LICENSE). It controls a **physical lock**; you assume all risk
-  for its operation, reliability, and security in your environment.
-- **Rights holders.** If you represent a rights holder and have a good-faith
-  concern about this project, please open an issue and it will be addressed
-  promptly.
+Independent and unofficial; not affiliated with, authorized, or endorsed by
+Philips, Versuni, Kaadas, iRevo, Juzi Wulian, or any related company. Product and
+company names are the property of their owners and are used nominatively, to
+describe the hardware this interoperates with.
+
+It was built by reverse-engineering the official app for interoperability —
+letting hardware you own work with Home Assistant — and contains no code or other
+copyrighted material from that app.
+
+It connects using your own account credentials, which may breach the vendor's
+terms of service; that is your call and your risk. Provided as is under the
+[MIT License](LICENSE), and it drives a physical lock, so you own the
+consequences of running it.
+
+If you represent a rights holder and have a concern about this project, please
+open an issue and it will be addressed promptly.
