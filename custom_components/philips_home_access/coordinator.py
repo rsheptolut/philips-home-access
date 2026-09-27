@@ -66,19 +66,31 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
                     _LOGGER.info("lock %s connectivity -> %s", lock.esn,
                                  "online" if lock.online else "OFFLINE")
                     tr.state.online = lock.online
-        # Slow-poll only while realtime is genuinely carrying every lock. A
-        # datacenter with no WS at all is poll-only, and so is one whose socket
-        # is currently down -- otherwise a dead listener left us on the 15-min
-        # safety-net poll, which is the slowest path, exactly when we needed
-        # the fastest one.
-        interval = SLOW_POLL_INTERVAL if self._ws_covers(locks) else FAST_POLL_INTERVAL
-        if interval != self.update_interval:
-            _LOGGER.info("poll interval -> %s (realtime %s)", interval,
-                         "up" if interval == SLOW_POLL_INTERVAL else "down")
-            self.update_interval = interval
+        self._update_poll_interval()
         _LOGGER.debug("poll: %d lock(s): %s", len(locks),
                       {esn: tr.state.summary() for esn, tr in self._trackers.items()})
         return {esn: tr.state for esn, tr in self._trackers.items()}
+
+    def _update_poll_interval(self) -> None:
+        """Slow-poll only while realtime is genuinely carrying every lock.
+
+        A datacenter with no WS at all is poll-only, and so is one whose socket
+        is currently down -- otherwise a dead listener left us on the 15-min
+        safety-net poll, which is the slowest path, exactly when we needed the
+        fastest one. Likewise while any device is offline: the cloud pushes
+        wifiState for the lock itself, but never for an accessory like the
+        door sensor, and a push missed while the socket was down is gone --
+        only the poll can be counted on to notice the return.
+        """
+        ws_up = self._ws_covers(list(self.locks.values()))
+        offline = sorted(esn for esn, tr in self._trackers.items()
+                         if not tr.state.online)
+        interval = SLOW_POLL_INTERVAL if ws_up and not offline else FAST_POLL_INTERVAL
+        if interval != self.update_interval:
+            _LOGGER.info("poll interval -> %s (realtime %s%s)", interval,
+                         "up" if ws_up else "down",
+                         f", offline: {', '.join(offline)}" if offline else "")
+            self.update_interval = interval
 
     # -- device roles -------------------------------------------------------
     def lock_esns(self) -> list[str]:
@@ -144,6 +156,9 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
         # Push to entities only when something actually changed (changes also
         # carries pending transitions, so setLock still surfaces locking/...).
         if res.changes:
+            # a pushed connectivity change moves the poll rate too (set before
+            # async_set_updated_data, which reschedules on update_interval)
+            self._update_poll_interval()
             self.async_set_updated_data(
                 {esn: t.state for esn, t in self._trackers.items()})
 

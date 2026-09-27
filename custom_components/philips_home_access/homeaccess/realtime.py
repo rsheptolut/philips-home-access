@@ -142,6 +142,11 @@ class Realtime:
                         ev = parse_event(msg.data)
                         if ev and on_event:
                             await on_event(ev) if is_coro else on_event(ev)
+                    # the iterator ends quietly on a CLOSE frame; record why,
+                    # or a server-side hang-up is indistinguishable from any
+                    # other disconnect
+                    _LOGGER.info("ws %s closed by server (code=%s, error=%s)",
+                                 self.dc.code, ws.close_code, ws.exception())
             except asyncio.CancelledError:
                 self.connected = False
                 raise
