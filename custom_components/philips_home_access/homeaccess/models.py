@@ -48,6 +48,7 @@ class Lock:
     nickname: str = ""
     online: bool = True
     raw: dict[str, Any] = field(default_factory=dict)
+    remote_control_supported: bool = True
 
     @property
     def open_status(self) -> str | None:
@@ -87,25 +88,33 @@ class Lock:
         # The lock's own dataCenter field is authoritative; fall back to the
         # datacenter we queried if it's missing/unknown.
         code = constants.datacenter_code_for(rec.get("dataCenter", ""), queried_from)
+        # The API calls this isRemoteUnlock, but devices that report 0 expose
+        # neither remote lock nor remote unlock in the official app. Treat an
+        # explicit 0 as authoritative while preserving the historical default
+        # for records from firmware that omits the capability.
+        remote_control_supported = rec.get("isRemoteUnlock", 1) not in (0, "0", False)
         return cls(
             esn=rec.get("wifiSN", ""),
             datacenter_code=code,
             user_number_id=int(rec.get("userNumberId", 0) or 0),
             nickname=rec.get("lockNickname", ""),
             online=str(rec.get("online", "1")) == "1",
+            remote_control_supported=remote_control_supported,
             raw=rec,
         )
 
     def to_dict(self) -> dict[str, Any]:
         return {"esn": self.esn, "datacenter_code": self.datacenter_code,
                 "user_number_id": self.user_number_id, "nickname": self.nickname,
-                "online": self.online}
+                "online": self.online,
+                "remote_control_supported": self.remote_control_supported}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Lock":
         return cls(esn=d["esn"], datacenter_code=d["datacenter_code"],
                    user_number_id=d.get("user_number_id", 0),
-                   nickname=d.get("nickname", ""), online=d.get("online", True))
+                   nickname=d.get("nickname", ""), online=d.get("online", True),
+                   remote_control_supported=d.get("remote_control_supported", True))
 
 
 @dataclass

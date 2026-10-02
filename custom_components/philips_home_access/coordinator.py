@@ -91,6 +91,18 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
         return [esn for esn in self.data
                 if not (esn in self.locks and self.locks[esn].is_accessory)]
 
+    def controllable_lock_esns(self) -> list[str]:
+        """Locks for which the cloud advertises remote control support."""
+        return [esn for esn in self.lock_esns()
+                if esn not in self.locks
+                or self.locks[esn].remote_control_supported]
+
+    def read_only_lock_esns(self) -> list[str]:
+        """Locks whose cloud record explicitly disables remote control."""
+        return [esn for esn in self.lock_esns()
+                if esn in self.locks
+                and not self.locks[esn].remote_control_supported]
+
     # -- realtime -----------------------------------------------------------
     def _ws_covers(self, locks: list[Lock]) -> bool:
         """True when a live WebSocket is carrying events for every lock."""

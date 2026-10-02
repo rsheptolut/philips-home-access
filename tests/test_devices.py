@@ -25,6 +25,14 @@ def _accessory_record():
             "power": 84, "partsState": 1}
 
 
+def _read_only_lock_record():
+    """An AU AP5 whose cloud record explicitly disables remote control."""
+    rec = _lock_record()
+    rec.update({"pid": "AP5", "productModel": "W9A15", "countryCode": "AU",
+                "dataCenter": "southeast-asia", "isRemoteUnlock": 0})
+    return rec
+
+
 def _mk(rec):
     return Lock.from_device_record(rec, "PhilipsNorthAmerica")
 
@@ -64,3 +72,25 @@ def test_a_slave_lock_that_reports_a_bolt_stays_a_lock():
     rec = _accessory_record()
     rec["openStatus"] = 2
     assert _mk(rec).is_accessory is False
+
+
+def test_explicit_remote_unlock_zero_disables_remote_control():
+    lock = _mk(_read_only_lock_record())
+    assert lock.is_accessory is False
+    assert lock.remote_control_supported is False
+    assert lock.open_status == "locked", "the read-only lock still reports state"
+    assert lock.battery == 55, "the read-only lock keeps its battery entity"
+
+
+def test_remote_control_capability_survives_device_cache_round_trip():
+    lock = _mk(_read_only_lock_record())
+    restored = Lock.from_dict(lock.to_dict())
+    assert restored.remote_control_supported is False
+
+
+def test_legacy_cache_and_records_without_capability_remain_controllable():
+    lock = _mk(_lock_record())
+    assert lock.remote_control_supported is True
+    cached = lock.to_dict()
+    del cached["remote_control_supported"]
+    assert Lock.from_dict(cached).remote_control_supported is True
