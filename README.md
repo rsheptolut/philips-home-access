@@ -6,11 +6,17 @@ This integration talks to the official cloud, but without the need to involve th
 
 ## Features
 
-- **Lock** — lock/unlock, with `locking…` / `unlocking…` transitions.
+- **Lock** — lock/unlock, with `locking…` / `unlocking…` transitions (confirmed
+  by realtime events, or by a quick follow-up poll where there are none).
 - **Door** binary sensor — open/closed, from the magnetic contact.
 - **Battery** — the lock's, plus the door sensor's own where one is fitted.
 - **Real-time updates** over the cloud WebSocket (North American data center only): app, keypad and manual operations appear within seconds, with periodic poll as backup.
 - **Auto-discovery** — every lock on the account becomes its own device. A paired door sensor is treated as an accessory of its lock.
+- **Locks behind a Wi-Fi gateway** (Bluetooth locks) — each lock is a device
+  under its gateway, and commands go through the gateway. This is **unverified**:
+  I don't own one. If you do, please report how it went in
+  [issue #3](https://github.com/rsheptolut/philips-home-access/issues/3), ideally
+  with debug logs (see below).
 - **Reauth** — reauthenticates as needed, prompts for the password if it changes.
 
 ## Install
@@ -24,19 +30,25 @@ This integration talks to the official cloud, but without the need to involve th
 
 ### Step 2
 
-Go to Settings → Devices & Services → Add Integration → Philips Home Access and enter the account email, password, and the phone area code of the country you selected at signup (for example `61` is for Australia). Locks that you previously linked to the app should get discovered automatically.
+Go to Settings → Devices & Services → Add Integration → Philips Home Access and enter the account email, password, and the phone country code of the country you selected at signup, digits only (`1` = US/Canada, `61` = Australia, `65` = Singapore). Locks that you previously linked to the app should get discovered automatically.
 
-### Use a secondary account
+### Use a dedicated account (required)
 
-Home Assistant stores the password in `.storage/core.config_entries` as
-plaintext, as it does for every integration that needs one. The cloud session
-token expires every ~2 h and there is no refresh token, so the password is
-needed to re-login.
+The Philips cloud allows **one signed-in session per account**: every sign-in
+signs out the one before it. If Home Assistant and the Philips app share an
+account, they keep signing each other out. Home Assistant then signs back in
+(at most every 10 minutes in the background, and it logs a warning when this
+happens), which signs your app out again.
 
-Share the lock with a family/guest account in the Philips app and give Home
-Assistant those credentials instead — you can revoke them at any time without
-touching your main account. Check the shared account can actually lock and
-unlock: "family" usually can, "guest" may not.
+So create a second account, share the lock with it from the Philips app, and
+give Home Assistant those credentials. Check the shared account can actually
+lock and unlock: "family" usually can, "guest" may not.
+
+It is also the safer setup. Home Assistant stores the password in
+`.storage/core.config_entries` as plaintext, as it does for every integration
+that needs one (the cloud session expires every ~2 h with no refresh token, so
+the password is needed to sign in again), and a shared account can be revoked
+at any time without touching your main one.
 
 Also secure remote access to Home Assistant itself (strong password and maybe 2FA).
 Home Assistant Cloud only tunnels the HA UI; it doesn't expose this
@@ -53,7 +65,13 @@ integration or its stored credentials directly.
   channel implemented in this integration, so they poll every 60 s. Commands still work, but state
   lags, and door open/close — an event-driven signal — may not show up reliably.
 - **Commands are verified on North America only.** Other datacenters' command
-  hosts are untested.
+  hosts are untested. If one answers with something that isn't the API (as a
+  Singapore host did in [issue #1](https://github.com/rsheptolut/philips-home-access/issues/1)),
+  the command is retried on the North America host, which other integrations use
+  for every region.
+- **Datacenters are learned from the cloud.** New ones (like
+  `PhilipsNorthAmericaNew`) are picked up at startup and polled; realtime stays
+  off for them until verified.
 - **Battery is coarse** — it tends to sit at 100% for a long time, then step down. Property of the lock I'm using for testing.
 
 ## Debugging
@@ -89,6 +107,7 @@ $env:HOMEACCESS_IDENTIFIER='you@example.com'; $env:HOMEACCESS_CREDENTIAL='...'
 python -m homeaccess devices                 # discover locks
 python -m homeaccess monitor                 # live events + lock/unlock prompt
 python -m homeaccess watch --raw             # dump raw event JSON
+python -m homeaccess datacenters             # the cloud's datacenter list
 ```
 
 ## Library (async)
@@ -107,7 +126,7 @@ async def main():
 asyncio.run(main())
 ```
 
-Errors are typed (`AuthError`, `HomeAccessConnectionError`); the library logs via
+Errors are typed (`AuthError`, `HomeAccessConnectionError`, `CommandError`); the library logs via
 `logging` (no printing — `rich` is used only by the CLI).
 
 | Module | Responsibility |
@@ -120,7 +139,8 @@ Errors are typed (`AuthError`, `HomeAccessConnectionError`); the library logs vi
 | `cli` | Command line. |
 
 Identity scheme used by the HA integration: config entry = account `uid`, device
-= lock `esn`, entity `unique_id` = `{esn}_lock` / `{esn}_door` / `{esn}_battery`.
+= lock / accessory / gateway `esn`, entity `unique_id` = `{esn}_lock` /
+`{esn}_door` / `{esn}_battery`.
 
 ## Tests
 
@@ -145,7 +165,10 @@ the realtime WebSocket).
 ## Known issues
 
 - The signing key is static and embedded into the app (and this integration). So if the official app developer rotates it in an app update, it would need re-extracting from the new app version and updating this integration. If this happens to me I'll notice really quick and extract the key.
-- `msgId` ordering assumes the cloud's sequence doesn't reset across a WebSocket reconnect (the poll self-heals if it does).
+- Events are ordered by the lock's own `timestamp` and `msgId`. After a battery
+  swap the lock's clock can come back wrong (seen a day behind) and its `msgId`
+  restarts at 0, so its events can be ignored as stale for a while; the poll
+  still corrects the state.
 
 ## Legal
 
