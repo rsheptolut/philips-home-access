@@ -18,6 +18,7 @@ integration can run its own state machine instead.
 from __future__ import annotations
 
 import json
+import time
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -25,6 +26,10 @@ from .models import LockEvent
 
 # pending command -> the bolt state that clears it
 _PENDING_TARGET = {"unlocking": "unlocked", "locking": "locked"}
+
+# A pending command that no event or poll has confirmed in this long is given
+# up on, so a jammed bolt (or a lost confirmation) doesn't spin forever.
+PENDING_TIMEOUT = 30.0
 
 
 @dataclass
@@ -35,6 +40,7 @@ class LockState:
     battery: int | None = None
     pending: str | None = None     # "locking" | "unlocking" | None
     online: bool = True            # cloud's view of the device's WiFi connectivity
+    pending_since: float | None = None  # time.monotonic() when pending was set
 
     def summary(self) -> str:
         bat = f"{self.battery}%" if self.battery is not None else "?"
@@ -77,6 +83,53 @@ class LockTracker:
         self._seen.append(k)
         return False
 
+    def set_pending(self, pending: str | None, now: float | None = None) -> list[str]:
+        """Mark a command in flight ("locking"/"unlocking"), or clear it."""
+        if pending == self.state.pending:
+            return []
+        self.state.pending = pending
+        self.state.pending_since = (time.monotonic() if now is None else now) \
+            if pending else None
+        return [f"pending={pending}" if pending else "pending=cleared"]
+
+    def expire_pending(self, now: float | None = None) -> list[str]:
+        """Drop a pending command older than PENDING_TIMEOUT."""
+        since = self.state.pending_since
+        if self.state.pending is None or since is None:
+            return []
+        if (time.monotonic() if now is None else now) - since < PENDING_TIMEOUT:
+            return []
+        return self.set_pending(None)
+
+    def apply_poll(self, bolt: str | None, door: str | None, battery: int | None,
+                   online: bool, now: float | None = None) -> list[str]:
+        """Fold in a device/list poll; return what changed.
+
+        A poll is authoritative for the current bolt and battery; door only
+        when the poll can tell (door is event-driven). `online` is always a
+        definite bool and the cloud's freshest word on reachability, so it is
+        trusted outright. A pending command clears once the bolt has reached
+        its target -- for a lock no WebSocket covers, the poll is the only
+        confirmation there is.
+        """
+        changes: list[str] = []
+        if bolt and bolt != self.state.bolt:
+            self.state.bolt = bolt
+            changes.append(f"lock={bolt}")
+        if door and door != self.state.door:
+            self.state.door = door
+            changes.append(f"door={door}")
+        if battery is not None and battery != self.state.battery:
+            self.state.battery = battery
+            changes.append(f"battery={battery}")
+        if online != self.state.online:
+            self.state.online = online
+            changes.append(f"online={online}")
+        if self.state.pending and _PENDING_TARGET.get(self.state.pending) == self.state.bolt:
+            changes += self.set_pending(None)
+        changes += self.expire_pending(now)
+        return changes
+
     def apply(self, ev: LockEvent) -> ApplyResult:
         res = ApplyResult()
         if self._is_redelivery(ev):
@@ -95,10 +148,8 @@ class LockTracker:
 
         # setLock = command issued (not yet physical) -> mark pending
         if ev.kind == "setLock" and ev.state in ("locked", "unlocked"):
-            pend = "unlocking" if ev.state == "unlocked" else "locking"
-            if pend != self.state.pending:
-                self.state.pending = pend
-                res.changes.append(f"pending={pend}")
+            res.changes += self.set_pending(
+                "unlocking" if ev.state == "unlocked" else "locking")
 
         # bolt from action snapshot or lock record, ordered by (ts, msgId)
         if ev.kind in ("action", "lock") and ev.state in ("locked", "unlocked"):
@@ -110,13 +161,11 @@ class LockTracker:
                     self.state.bolt = ev.state
                     res.changes.append(f"lock={ev.state}")
                 if ev.kind == "lock" and self.state.pending:  # confirmation
-                    self.state.pending = None
-                    res.changes.append("pending=cleared")
+                    res.changes += self.set_pending(None)
 
         # clear pending once the bolt has reached the commanded target
         if self.state.pending and _PENDING_TARGET.get(self.state.pending) == self.state.bolt:
-            self.state.pending = None
-            res.changes.append("pending=cleared")
+            res.changes += self.set_pending(None)
 
         # door contact from door records, ordered by (ts, msgId)
         if ev.kind == "door" and ev.state in ("opened", "closed"):

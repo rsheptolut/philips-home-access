@@ -18,3 +18,7 @@ DEFAULT_AREACODE = "61"
 # are poll-only, so they poll fast.
 SLOW_POLL_INTERVAL = timedelta(minutes=15)
 FAST_POLL_INTERVAL = timedelta(seconds=60)
+
+# After a command to a lock no WebSocket covers, poll at these delays (s) to
+# confirm it: the bolt takes a few seconds and device/list's openStatus lags.
+FOLLOW_UP_REFRESHES = (5, 15)

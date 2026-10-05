@@ -52,23 +52,12 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
                 self._trackers[lock.esn] = LockTracker(LockState(
                     lock.esn, bolt=lock.open_status, door=lock.door,
                     battery=lock.battery, online=lock.online))
-            else:
-                # A poll is authoritative for current bolt/battery; keep door if
-                # the poll can't determine it (door is event-driven).
-                if lock.open_status:
-                    tr.state.bolt = lock.open_status
-                if lock.door:
-                    tr.state.door = lock.door
-                if lock.battery is not None:
-                    tr.state.battery = lock.battery
-                # online is always a definite bool (unlike bolt/door/battery,
-                # never "undetermined"), and it's the cloud's own freshest
-                # word on whether it can currently reach the device at all --
-                # trust it outright, every poll.
-                if lock.online != tr.state.online:
-                    _LOGGER.info("lock %s connectivity -> %s", lock.esn,
-                                 "online" if lock.online else "OFFLINE")
-                    tr.state.online = lock.online
+                continue
+            changes = tr.apply_poll(lock.open_status, lock.door, lock.battery,
+                                    lock.online)
+            if any(c.startswith("online=") for c in changes):
+                _LOGGER.info("lock %s connectivity -> %s", lock.esn,
+                             "online" if lock.online else "OFFLINE")
         self._update_poll_interval()
         _LOGGER.debug("poll: %d lock(s): %s", len(locks),
                       {esn: tr.state.summary() for esn, tr in self._trackers.items()})
@@ -105,6 +94,30 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
         """
         return [esn for esn in self.data
                 if not (esn in self.locks and self.locks[esn].is_accessory)]
+
+    # -- commands -----------------------------------------------------------
+    @callback
+    def set_pending(self, esn: str, pending: str | None) -> None:
+        """Show a command as in flight ("locking"/"unlocking") or clear it.
+
+        Notifies entities without async_set_updated_data, which would also
+        push the next scheduled poll back.
+        """
+        tr = self._trackers.get(esn)
+        if tr is not None and tr.set_pending(pending):
+            self.async_update_listeners()
+
+    @callback
+    def expire_pending(self, esn: str) -> None:
+        """Give up on a command nothing has confirmed (see PENDING_TIMEOUT)."""
+        tr = self._trackers.get(esn)
+        if tr is not None and tr.expire_pending():
+            self.async_update_listeners()
+
+    def ws_covers_lock(self, esn: str) -> bool:
+        """True when a live WebSocket will confirm this lock's commands."""
+        lock = self.locks.get(esn)
+        return lock is not None and self._ws_covers([lock])
 
     # -- realtime -----------------------------------------------------------
     def _ws_covers(self, locks: list[Lock]) -> bool:

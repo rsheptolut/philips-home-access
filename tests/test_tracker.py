@@ -1,5 +1,6 @@
 """Tests for the client-side LockTracker (init + newest-wins + out-of-order)."""
 from homeaccess import LockEvent, LockState, LockTracker
+from homeaccess.tracker import PENDING_TIMEOUT
 
 
 def test_pre_actuation_snapshot_is_not_a_change():
@@ -73,3 +74,47 @@ def test_redelivery_does_not_regress_bolt():
     r = tr.apply(LockEvent("action", "RL", state="unlocked", msg_id=3360,
                            timestamp="1004", raw={"body": {"u": 1}}))
     assert r.duplicate and not r.changes and tr.state.bolt == "locked"
+
+
+# --- commands confirmed by polling (no WebSocket) --------------------------
+def test_poll_clears_pending_once_the_bolt_reaches_the_target():
+    tr = LockTracker(LockState("RL", bolt="locked"))
+    tr.set_pending("unlocking", now=0)
+    assert "pending=cleared" not in tr.apply_poll("locked", None, 80, True, now=5)
+    assert tr.state.pending == "unlocking"
+    changes = tr.apply_poll("unlocked", None, 80, True, now=15)
+    assert "lock=unlocked" in changes and "pending=cleared" in changes
+    assert tr.state.pending is None and tr.state.pending_since is None
+
+
+def test_pending_expires_when_nothing_confirms_it():
+    tr = LockTracker(LockState("RL", bolt="locked"))
+    tr.set_pending("unlocking", now=100)
+    assert tr.expire_pending(now=100 + PENDING_TIMEOUT - 1) == []
+    assert tr.expire_pending(now=100 + PENDING_TIMEOUT) == ["pending=cleared"]
+    assert tr.state.pending is None
+
+
+def test_poll_expires_a_stale_pending_too():
+    tr = LockTracker(LockState("RL", bolt="locked"))
+    tr.set_pending("unlocking", now=0)
+    assert "pending=cleared" in tr.apply_poll("locked", None, None, True,
+                                              now=PENDING_TIMEOUT + 1)
+
+
+def test_poll_keeps_door_when_it_cannot_tell():
+    tr = LockTracker(LockState("RL", bolt="locked", door="open"))
+    tr.apply_poll("locked", None, None, True)
+    assert tr.state.door == "open"
+
+
+def test_poll_reports_connectivity_changes():
+    tr = LockTracker(LockState("RL", online=True))
+    assert tr.apply_poll(None, None, None, False) == ["online=False"]
+    assert tr.state.online is False
+
+
+def test_ws_command_event_stamps_pending_for_expiry():
+    tr = LockTracker(LockState("RL", bolt="locked"))
+    tr.apply(LockEvent("setLock", "RL", state="unlocked", timestamp="10"))
+    assert tr.state.pending_since is not None
