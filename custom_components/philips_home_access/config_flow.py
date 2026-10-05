@@ -15,11 +15,18 @@ from .homeaccess import AuthError, HomeAccess, HomeAccessConnectionError, Settin
 
 _LOGGER = logging.getLogger(__name__)
 
+# No default area code: the one chosen at signup is the user's to give (a wrong
+# default once quietly applied 61/Australia to everyone).
 USER_SCHEMA = vol.Schema({
     vol.Required(CONF_EMAIL): str,
     vol.Required(CONF_PASSWORD): str,
-    vol.Optional(CONF_AREACODE, default=DEFAULT_AREACODE): str,
+    vol.Required(CONF_AREACODE): str,
 })
+
+
+def _clean_areacode(value: str) -> str:
+    """"+61 " -> "61"; the cloud wants bare digits."""
+    return "".join(value.split()).lstrip("+")
 
 
 class PhilipsConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -60,15 +67,20 @@ class PhilipsConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         reason = {"reason": ""}
         if user_input is not None:
-            uid = await self._try_verify(user_input, errors, reason)
-            if uid is not None:
+            user_input = {**user_input,
+                          CONF_AREACODE: _clean_areacode(user_input[CONF_AREACODE])}
+            if not user_input[CONF_AREACODE].isdigit():
+                errors[CONF_AREACODE] = "invalid_areacode"
+            elif (uid := await self._try_verify(user_input, errors, reason)) is not None:
                 await self.async_set_unique_id(uid)
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
                     title=user_input[CONF_EMAIL], data=user_input)
         return self.async_show_form(
-            step_id="user", data_schema=USER_SCHEMA, errors=errors,
-            description_placeholders=reason)
+            step_id="user",
+            data_schema=self.add_suggested_values_to_schema(USER_SCHEMA, {
+                k: v for k, v in (user_input or {}).items() if k != CONF_PASSWORD}),
+            errors=errors, description_placeholders=reason)
 
     async def async_step_reauth(
         self, entry_data: Mapping[str, Any]
