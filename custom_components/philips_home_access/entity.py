@@ -6,7 +6,25 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import PhilipsCoordinator
-from .homeaccess import LockState
+from .homeaccess import Lock, LockState
+
+
+def device_info_for(esn: str, lock: Lock | None) -> DeviceInfo:
+    """The HA device for one esn (lock, accessory or gateway).
+
+    Parent links (accessory -> lock, lock -> gateway) are not set here:
+    DeviceInfo's via_device is deprecated, so __init__ links devices by id.
+    """
+    raw = lock.raw if lock else {}
+    return DeviceInfo(
+        identifiers={(DOMAIN, esn)},
+        name=lock.nickname if lock and lock.nickname else esn,
+        manufacturer="Philips",
+        model=raw.get("productModel"),
+        sw_version=(raw.get("lockSoftwareVersion") or raw.get("gatewayVersion")
+                    or raw.get("wifiVersion")),
+        serial_number=esn,
+    )
 
 
 class PhilipsLockEntity(CoordinatorEntity[PhilipsCoordinator]):
@@ -29,17 +47,4 @@ class PhilipsLockEntity(CoordinatorEntity[PhilipsCoordinator]):
 
     @property
     def device_info(self) -> DeviceInfo:
-        lock = self.coordinator.locks.get(self._esn)
-        info = DeviceInfo(
-            identifiers={(DOMAIN, self._esn)},
-            name=lock.nickname if lock and lock.nickname else self._esn,
-            manufacturer="Philips",
-            model=lock.raw.get("productModel") if lock else None,
-            sw_version=lock.raw.get("lockSoftwareVersion") if lock else None,
-            serial_number=self._esn,
-        )
-        # An accessory is a device of its own (its own battery), but it belongs
-        # under the lock it is paired to rather than beside it.
-        if lock and lock.master_sn:
-            info["via_device"] = (DOMAIN, lock.master_sn)
-        return info
+        return device_info_for(self._esn, self.coordinator.locks.get(self._esn))

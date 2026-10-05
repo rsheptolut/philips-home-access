@@ -20,8 +20,9 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator: PhilipsCoordinator = hass.data[DOMAIN][entry.entry_id]
-    # Every esn, accessories included: the door sensor runs on its own
+    # Every tracked esn, accessories included: the door sensor runs on its own
     # battery, separate from the lock's, and both are worth surfacing.
+    # (A gateway has no battery and is never tracked.)
     async_add_entities(PhilipsBatterySensor(coordinator, esn)
                        for esn in coordinator.data)
 

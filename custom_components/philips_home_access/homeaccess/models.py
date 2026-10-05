@@ -39,9 +39,19 @@ class TokenSet:
                    obtained=d.get("obtained", 0))
 
 
+# Record fields the device cache keeps (to_dict): enough to tell a device's role
+# and route its commands -- a lock behind a gateway needs masterSn and mac --
+# when a command runs off the cache before the first poll.
+_CACHED_RAW_KEYS = ("masterSn", "mac", "deviceType", "openStatus")
+
+
 @dataclass
 class Lock:
-    """A smart lock under an account, tagged with the datacenter that owns it."""
+    """A smart lock under an account, tagged with the datacenter that owns it.
+
+    device/list lists every device the same way, so the same class also carries
+    a lock's accessory (is_accessory) and a Wi-Fi gateway (is_gateway).
+    """
     esn: str
     datacenter_code: str
     user_number_id: int = 0
@@ -65,8 +75,23 @@ class Lock:
 
     @property
     def master_sn(self) -> str:
-        """The lock this device is paired to, for an accessory ("" for a lock)."""
+        """The device this one hangs off: the lock an accessory is paired to,
+        or the gateway a gateway lock talks through ("" for a direct lock)."""
         return str(self.raw.get("masterSn") or "")
+
+    @property
+    def mac(self) -> str:
+        """Bluetooth MAC; a gateway lock's commands address it by this."""
+        return str(self.raw.get("mac") or "")
+
+    @property
+    def is_gateway(self) -> bool:
+        """A Wi-Fi gateway that bridges Bluetooth-only locks to the cloud.
+
+        It is listed by device/list beside its locks, with no bolt or battery
+        of its own; each of its locks names it in `masterSn`.
+        """
+        return self.raw.get("deviceType") == "GATEWAY"
 
     @property
     def is_accessory(self) -> bool:
@@ -78,7 +103,8 @@ class Lock:
         separates them. Two things do: an accessory is paired to a lock
         (`masterSn`) and never reports a bolt (`openStatus`). Requiring both
         keeps a genuine slave lock -- which would report a bolt -- a lock, and
-        can never swallow a top-level lock, which has no masterSn at all.
+        can never swallow a top-level lock, which has no masterSn at all. A
+        lock behind a gateway has a masterSn too, but reports its bolt.
         """
         return bool(self.master_sn) and "openStatus" not in self.raw
 
@@ -99,13 +125,15 @@ class Lock:
     def to_dict(self) -> dict[str, Any]:
         return {"esn": self.esn, "datacenter_code": self.datacenter_code,
                 "user_number_id": self.user_number_id, "nickname": self.nickname,
-                "online": self.online}
+                "online": self.online,
+                "raw": {k: self.raw[k] for k in _CACHED_RAW_KEYS if k in self.raw}}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Lock":
         return cls(esn=d["esn"], datacenter_code=d["datacenter_code"],
                    user_number_id=d.get("user_number_id", 0),
-                   nickname=d.get("nickname", ""), online=d.get("online", True))
+                   nickname=d.get("nickname", ""), online=d.get("online", True),
+                   raw=dict(d.get("raw") or {}))
 
 
 @dataclass

@@ -29,6 +29,14 @@ from .transport import HttpClient
 _LOGGER = logging.getLogger(__name__)
 
 
+def _normalize_mac(mac: str) -> str:
+    """"aabbccddeeff" / "aa-bb-..." -> "AA:BB:CC:DD:EE:FF" (else unchanged)."""
+    cleaned = mac.replace(" ", "").replace(":", "").replace("-", "").upper()
+    if len(cleaned) != 12:
+        return cleaned
+    return ":".join(cleaned[i:i + 2] for i in range(0, 12, 2))
+
+
 class HomeAccess:
     def __init__(self, settings: Settings | None = None,
                  session: aiohttp.ClientSession | None = None) -> None:
@@ -193,21 +201,41 @@ class HomeAccess:
     # -- operations ---------------------------------------------------------
     async def async_unlock(self, esn: str) -> dict[str, Any]:
         """open-device -> physically UNLOCKS the lock."""
-        return await self._command(esn, constants.OPEN_DEVICE_PATH)
+        return await self._command(esn, open_=True)
 
     async def async_lock(self, esn: str) -> dict[str, Any]:
         """close-device -> physically LOCKS the lock."""
-        return await self._command(esn, constants.CLOSE_DEVICE_PATH)
+        return await self._command(esn, open_=False)
 
-    async def _command(self, esn: str, path: str) -> dict[str, Any]:
+    def gateway_of(self, lock: Lock) -> Lock | None:
+        """The gateway `lock` talks through, or None for a direct (Wi-Fi) lock."""
+        if not lock.master_sn:
+            return None
+        return next((d for d in self._devices
+                     if d.esn == lock.master_sn and d.is_gateway), None)
+
+    def _command_request(self, l: Lock, open_: bool) -> tuple[str, dict[str, Any]]:
+        """(path, params) for an open/close: direct locks take esn alone; a
+        lock behind a gateway is addressed by its mac through the gateway."""
+        gw = self.gateway_of(l)
+        if gw is None:
+            path = constants.OPEN_DEVICE_PATH if open_ else constants.CLOSE_DEVICE_PATH
+            return path, {"esn": l.esn, "userNumberId": l.user_number_id}
+        path = constants.GATEWAY_OPEN_PATH if open_ else constants.GATEWAY_CLOSE_PATH
+        return path, {"esn": l.esn, "mac": _normalize_mac(l.mac),
+                      "masterSn": gw.esn, "userNumberId": l.user_number_id}
+
+    async def _command(self, esn: str, open_: bool) -> dict[str, Any]:
         """Send an encrypted open/close; raise CommandError unless code 200.
 
         Accepted commands answer code 200 (observed live); anything else is the
         cloud refusing, and must not pass for success.
         """
         l = await self.async_get(esn)
+        path, params = self._command_request(l, open_)
+        _LOGGER.debug("%s %s via %s", path, esn, l.datacenter_code)
         resp = await self.client(l.datacenter_code).post_encrypted(
-            path, {"esn": esn, "userNumberId": l.user_number_id})
+            path, params, user_initiated=True)
         if str(resp.get("code")) != "200":
             raise CommandError(
                 f"{path} for {esn} via {l.datacenter_code} refused: "

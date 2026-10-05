@@ -76,6 +76,11 @@ AUTH_FAIL_CODES = {"444"}
 DEVICE_LIST_PATH = "/homeaccess/device/list"
 OPEN_DEVICE_PATH = "/v3/device/open-device"
 CLOSE_DEVICE_PATH = "/v3/device/close-device"
+# Locks bridged by a Wi-Fi gateway (Bluetooth locks): same encrypted body, plus
+# the lock's mac and the gateway's esn. From rjbogz/philips_home_access, which
+# has user reports of it working; not verified on our own hardware.
+GATEWAY_OPEN_PATH = "/v3/gateway/set-lock-open"
+GATEWAY_CLOSE_PATH = "/v3/gateway/set-lock-close"
 QUERY_ATTR_PATH = "/v4/device/query-device-attr"
 QUERY_VERSION_PATH = "/v4/device/query-device-versioninfo"
 DTIM_WAKE_PATH = "/v3/device/dtim-wake"

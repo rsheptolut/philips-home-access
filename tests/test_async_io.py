@@ -363,6 +363,57 @@ async def test_command_refused_raises_instead_of_passing_for_success():
         await ha.async_lock("RL")
 
 
+def _ha_with_gateway_lock(command_response):
+    login = {"code": 200, "data": {"users": [
+        {"uid": "U1", "token": _decodable_token(), "code": "PhilipsNorthAmerica"}]}}
+    devices = {"code": 200, "data": {"wifiList": [
+        {"wifiSN": "GW1", "deviceType": "GATEWAY"},
+        {"wifiSN": "BL1", "deviceType": "LOCK", "masterSn": "GW1",
+         "mac": "aabbccddeeff", "openStatus": 1, "userNumberId": 3}]}}
+    sess = _Session([login, devices, command_response])
+    return HomeAccess(_settings(), session=sess), sess
+
+
+@pytest.fixture
+def sent_params(monkeypatch):
+    """What went into the encrypted command body (encrypted with the server's
+    key, so the wire bytes can't be read back)."""
+    from homeaccess import crypto
+    captured = []
+    real = crypto.encrypted_command_body
+
+    def spy(params):
+        captured.append(dict(params))
+        return real(params)
+
+    monkeypatch.setattr(crypto, "encrypted_command_body", spy)
+    return captured
+
+
+async def test_gateway_lock_commands_go_through_the_gateway(sent_params):
+    ha, sess = _ha_with_gateway_lock({"code": 200, "msg": "success"})
+    await ha.async_discover()
+    await ha.async_unlock("BL1")
+    assert sess.calls[-1][1].endswith("/v3/gateway/set-lock-open")
+    assert sent_params[-1] == {"esn": "BL1", "mac": "AA:BB:CC:DD:EE:FF",
+                               "masterSn": "GW1", "userNumberId": 3}
+
+
+async def test_gateway_lock_close_path(sent_params):
+    ha, sess = _ha_with_gateway_lock({"code": 200, "msg": "success"})
+    await ha.async_discover()
+    await ha.async_lock("BL1")
+    assert sess.calls[-1][1].endswith("/v3/gateway/set-lock-close")
+
+
+async def test_direct_lock_commands_are_unchanged(sent_params):
+    ha, sess = _ha_with_lock({"code": 200, "msg": "success"})
+    await ha.async_discover()
+    await ha.async_lock("RL")
+    assert sess.calls[-1][1].endswith("/v3/device/close-device")
+    assert sent_params[-1] == {"esn": "RL", "userNumberId": 0}
+
+
 # --- WebSocket -------------------------------------------------------------
 class _Msg:
     def __init__(self, data):

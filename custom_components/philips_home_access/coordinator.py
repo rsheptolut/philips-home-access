@@ -33,6 +33,7 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
         self._trackers: dict[str, LockTracker] = {}
         self._realtimes: dict[str, Realtime] = {}   # datacenter code -> listener
         self._ws_tasks: list = []
+        self._gateway_kinds_logged: set[tuple[str, str]] = set()
 
     # -- safety-net poll ----------------------------------------------------
     async def _async_update_data(self) -> dict[str, LockState]:
@@ -44,6 +45,8 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
             raise UpdateFailed(str(e)) from e
         for lock in locks:
             self.locks[lock.esn] = lock
+            if lock.is_gateway:
+                continue  # no bolt, door or battery to track; kept for device info
             tr = self._trackers.get(lock.esn)
             if tr is None:
                 self._trackers[lock.esn] = LockTracker(LockState(
@@ -82,7 +85,7 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
         door sensor, and a push missed while the socket was down is gone --
         only the poll can be counted on to notice the return.
         """
-        ws_up = self._ws_covers(list(self.locks.values()))
+        ws_up = self._ws_covers([l for l in self.locks.values() if not l.is_gateway])
         offline = sorted(esn for esn, tr in self._trackers.items()
                          if not tr.state.online)
         interval = SLOW_POLL_INTERVAL if ws_up and not offline else FAST_POLL_INTERVAL
@@ -98,15 +101,21 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
 
         device/list returns paired accessories (the door sensor) alongside the
         lock, so platforms that only make sense for a lock use this instead of
-        iterating every esn in `data`.
+        iterating every esn in `data`. (Gateways never reach `data` at all.)
         """
         return [esn for esn in self.data
                 if not (esn in self.locks and self.locks[esn].is_accessory)]
 
     # -- realtime -----------------------------------------------------------
     def _ws_covers(self, locks: list[Lock]) -> bool:
-        """True when a live WebSocket is carrying events for every lock."""
+        """True when a live WebSocket is carrying events for every lock.
+
+        A lock behind a gateway never counts: whether its events arrive, and
+        under whose esn, is unverified -- so it gets the fast poll.
+        """
         for lock in locks:
+            if self.client.gateway_of(lock) is not None:
+                return False
             dc = Datacenter.by_code(lock.datacenter_code)
             rt = self._realtimes.get(dc.code)
             if not dc.ws_addr or rt is None or not rt.connected:
@@ -146,6 +155,18 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
     def _on_event(self, ev: LockEvent) -> None:
         tr = self._trackers.get(ev.lock_id)
         if tr is None:
+            dev = self.locks.get(ev.lock_id)
+            if dev is not None and dev.is_gateway:
+                # Unverified territory: do a gateway lock's events arrive under
+                # the gateway's esn? Surface each kind once so a user's log
+                # answers it.
+                key = (ev.lock_id, ev.kind)
+                if key not in self._gateway_kinds_logged:
+                    self._gateway_kinds_logged.add(key)
+                    _LOGGER.info("ws event %s from gateway %s (not applied; please "
+                                 "report on GitHub): %s", ev.kind, ev.lock_id,
+                                 str(ev.raw)[:400])
+                return
             _LOGGER.debug("ws event for unknown lock %s (ignored)", ev.lock_id)
             return
         res = tr.apply(ev)

@@ -73,3 +73,55 @@ def test_datacenter_field_maps_to_its_code():
     assert datacenter_code_for("southeast-asia", "X") == "PhilipsSingapore"
     assert datacenter_code_for("", "PhilipsOneness") == "PhilipsOneness"
     assert datacenter_code_for("mars-colony", "PhilipsOneness") == "PhilipsOneness"
+
+
+# --- locks behind a Wi-Fi gateway ------------------------------------------
+# Shape from rjbogz/philips_home_access and issue #3 (Bluetooth locks bridged by
+# a gateway); serials invented.
+def _gateway_record():
+    return {"wifiSN": "GW1234567890", "lockNickname": "Gateway",
+            "deviceType": "GATEWAY", "online": "1", "rssi": "-55dBm"}
+
+
+def _gateway_lock_record():
+    return {"wifiSN": "BL1234567890", "lockNickname": "Back Door",
+            "deviceType": "LOCK", "masterSn": "GW1234567890",
+            "mac": "aabbccddeeff", "openStatus": 1, "power": 70, "online": "1"}
+
+
+def test_a_gateway_is_neither_lock_nor_accessory():
+    gw = _mk(_gateway_record())
+    assert gw.is_gateway is True
+    assert gw.is_accessory is False
+    assert gw.battery is None and gw.open_status is None
+
+
+def test_a_lock_behind_a_gateway_is_a_lock():
+    lk = _mk(_gateway_lock_record())
+    assert lk.is_gateway is False and lk.is_accessory is False
+    assert lk.master_sn == "GW1234567890" and lk.mac == "aabbccddeeff"
+
+
+def test_cache_keeps_what_routing_and_roles_need():
+    """Commands can run off the device cache before the first poll, so the
+    cached copy must still know its gateway and mac -- and must not turn a
+    gateway lock (masterSn, no bolt field) into an accessory."""
+    for rec in (_gateway_lock_record(), _gateway_record(), _accessory_record()):
+        orig = _mk(rec)
+        back = Lock.from_dict(orig.to_dict())
+        assert (back.master_sn, back.mac, back.is_gateway, back.is_accessory) == \
+            (orig.master_sn, orig.mac, orig.is_gateway, orig.is_accessory)
+
+
+def test_old_cache_without_raw_still_loads():
+    d = {"esn": "RL1", "datacenter_code": "PhilipsNorthAmerica"}
+    assert Lock.from_dict(d).master_sn == ""
+
+
+def test_mac_normalization():
+    from homeaccess.api import _normalize_mac
+    assert _normalize_mac("aabbccddeeff") == "AA:BB:CC:DD:EE:FF"
+    assert _normalize_mac("aa-bb-cc-dd-ee-ff") == "AA:BB:CC:DD:EE:FF"
+    assert _normalize_mac(" AA:BB:CC:DD:EE:FF ") == "AA:BB:CC:DD:EE:FF"
+    assert _normalize_mac("abc") == "ABC"
+    assert _normalize_mac("") == ""

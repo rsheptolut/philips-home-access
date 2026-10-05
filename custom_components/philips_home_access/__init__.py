@@ -6,10 +6,12 @@ from pathlib import Path
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import CONF_AREACODE, DEFAULT_AREACODE, DOMAIN, PLATFORMS
 from .coordinator import PhilipsCoordinator
+from .entity import device_info_for
 from .homeaccess import HomeAccess, Settings
 from .homeaccess import state as _state
 
@@ -34,11 +36,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Logs in + discovers; raises ConfigEntryAuthFailed / ConfigEntryNotReady.
     await coordinator.async_config_entry_first_refresh()
+    _register_devices(hass, entry, coordinator)
     await coordinator.async_start_realtime()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+def _register_devices(hass: HomeAssistant, entry: ConfigEntry,
+                      coordinator: PhilipsCoordinator) -> None:
+    """Create every device up front, then hang each off its parent.
+
+    An accessory belongs under the lock it is paired to, and a gateway lock
+    under its gateway (which has no entities, so nothing else would create it).
+    Linking by device id replaces DeviceInfo's deprecated via_device, which
+    also needed the parent to exist before the child's entities were added.
+    """
+    reg = dr.async_get(hass)
+    devices = {esn: reg.async_get_or_create(config_entry_id=entry.entry_id,
+                                            **device_info_for(esn, lock))
+               for esn, lock in coordinator.locks.items()}
+    for esn, lock in coordinator.locks.items():
+        parent = devices.get(lock.master_sn)
+        if parent is not None and devices[esn].via_device_id != parent.id:
+            reg.async_update_device(devices[esn].id, via_device_id=parent.id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
