@@ -14,11 +14,15 @@ from .homeaccess import HomeAccess, Settings
 from .homeaccess import state as _state
 
 
+def _use_ha_state_dir(hass: HomeAssistant) -> None:
+    """Keep the library's token/device cache inside HA's config dir (not the
+    read-only component dir). Credentials live in the config entry, not here."""
+    _state.STATE_DIR = Path(hass.config.path(DOMAIN))
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Philips Home Access from a config entry."""
-    # Keep the library's token/device cache inside HA's config dir (not the
-    # read-only component dir). Credentials live in the config entry, not here.
-    _state.STATE_DIR = Path(hass.config.path(DOMAIN))
+    _use_ha_state_dir(hass)
 
     settings = Settings(
         identifier=entry.data[CONF_EMAIL],
@@ -45,3 +49,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unloaded:
         hass.data[DOMAIN].pop(entry.entry_id)
     return unloaded
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete the account's cached session tokens and device list."""
+    _use_ha_state_dir(hass)
+    await _state.async_clear(entry.data[CONF_EMAIL])
