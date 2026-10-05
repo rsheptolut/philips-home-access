@@ -267,6 +267,44 @@ async def test_async_login_bad_credentials_raises():
         await acct.async_login()
 
 
+async def test_login_refusal_carries_the_clouds_reason_and_is_logged(caplog):
+    # Real reply for an unregistered email; the setup screen shows `reason`.
+    reply = {"msg": "Account does not exist", "errDes": "Account does not exist",
+             "code": 1004, "errCode": "account_not_find"}
+    acct = Account(_settings(), _Session([reply]))
+    with caplog.at_level("WARNING"), pytest.raises(AuthError) as ei:
+        await acct.async_login()
+    assert ei.value.code == 1004
+    assert ei.value.reason == "Account does not exist (code 1004)"
+    assert "account_not_find" in caplog.text and "pw" not in caplog.text
+
+
+async def test_login_success_log_redacts_tokens(caplog):
+    secret = _decodable_token()
+    login = {"code": 200, "data": {"users": [
+        {"uid": "U1", "token": secret, "code": "PhilipsNorthAmerica"}]}}
+    acct = Account(_settings(), _Session([login]))
+    with caplog.at_level("DEBUG"):
+        await acct.async_login()
+    assert "Login: HTTP 200" in caplog.text
+    assert secret not in caplog.text and "'token': '***'" in caplog.text
+
+
+async def test_login_non_json_reply_is_a_connection_error():
+    acct = Account(_settings(), _Session([_NotJsonResp("<html>502 Bad Gateway</html>", 502)]))
+    with pytest.raises(HomeAccessResponseError, match="HTTP 502"):
+        await acct.async_login()
+
+
+async def test_login_without_users_explains_instead_of_crashing():
+    # e.g. status 1 + confirmCode, which needs the (unimplemented) loginConfirm step
+    reply = {"code": 200, "data": {"status": 1, "confirmCode": "c0de", "users": None}}
+    acct = Account(_settings(), _Session([reply]))
+    with pytest.raises(AuthError) as ei:
+        await acct.async_login()
+    assert "extra sign-in step" in ei.value.reason and "c0de" not in str(ei.value)
+
+
 async def test_transport_reauths_once_on_444():
     reauths = []
 

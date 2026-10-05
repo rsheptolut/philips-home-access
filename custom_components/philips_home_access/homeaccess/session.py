@@ -5,17 +5,32 @@ passes HA's shared session); the CLI/api create and own one.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
+from typing import Any
 
 import aiohttp
 
 from . import constants, state, tokens
-from .exceptions import AuthError, HomeAccessConnectionError
+from .exceptions import AuthError, HomeAccessConnectionError, HomeAccessResponseError
 from .models import TokenSet
 from .settings import Settings
 
 _LOGGER = logging.getLogger(__name__)
+
+# Never log these values: session tokens, passwords, one-time codes.
+_SECRET_KEYS = {"token", "credential", "password", "confirmCode", "adminPwd"}
+
+
+def _redact(obj: Any) -> Any:
+    """Copy of a cloud reply that is safe to log."""
+    if isinstance(obj, dict):
+        return {k: "***" if k in _SECRET_KEYS and v else _redact(v)
+                for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_redact(v) for v in obj]
+    return obj
 
 
 class Account:
@@ -58,12 +73,43 @@ class Account:
                 ssl=None if s.verify_tls else False,
                 proxy=s.debug_proxy or None,
             ) as resp:
-                data = await resp.json(content_type=None)
+                status = resp.status
+                text = await resp.text()
         except aiohttp.ClientError as e:
             raise HomeAccessConnectionError(f"login request failed: {e}") from e
-        if str(data.get("code")) != "200":
-            raise AuthError(f"Login failed: {data}")
-        users = data["data"]["users"]
+        try:
+            data = json.loads(text)
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            _LOGGER.warning("Login: HTTP %s, unreadable reply: %r", status, text[:500])
+            raise HomeAccessResponseError(
+                f"login -> HTTP {status}, not a JSON object: {text[:120]!r}")
+
+        code = data.get("code")
+        if str(code) != "200":
+            # The cloud's refusal is the only clue to *why* (1001 wrong password,
+            # 1004 unknown account, ...) -- never swallow it.
+            _LOGGER.warning("Login rejected for %s: HTTP %s, reply %s",
+                            s.identifier, status, _redact(data))
+            msg = data.get("msg") or data.get("errDes") or "no message"
+            raise AuthError(f"Login failed: {_redact(data)}", code=code,
+                            reason=f"{msg} (code {code})")
+        _LOGGER.debug("Login: HTTP %s, reply %s", status, _redact(data))
+
+        payload = data.get("data") if isinstance(data.get("data"), dict) else {}
+        users = payload.get("users") or []
+        if not users:
+            # e.g. status 1 + confirmCode: the app then calls loginConfirm, a
+            # second step this client does not implement yet.
+            _LOGGER.warning("Login accepted but returned no session for %s "
+                            "(status=%r, confirmCode present=%s): %s",
+                            s.identifier, payload.get("status"),
+                            bool(payload.get("confirmCode")), _redact(data))
+            raise AuthError(
+                f"Login returned no users: {_redact(data)}", code=code,
+                reason=f"the account needs an extra sign-in step that isn't "
+                       f"supported yet (status {payload.get('status')!r})")
         ts = TokenSet(
             uid=users[0].get("uid", ""),
             tokens={u["code"]: u["token"] for u in users},

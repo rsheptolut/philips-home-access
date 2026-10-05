@@ -13,7 +13,17 @@ class HomeAccessError(Exception):
 
 
 class AuthError(HomeAccessError):
-    """Login/credentials rejected, or no usable token. Permanent until creds change."""
+    """Login/credentials rejected, or no usable token. Permanent until creds change.
+
+    `code` / `reason` carry the cloud's own refusal (e.g. 1004 "Account does not
+    exist") when there is one, so the UI can show it instead of a generic message.
+    """
+
+    def __init__(self, message: str, *, code: object = None,
+                 reason: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.reason = reason or message
 
 
 class HomeAccessConnectionError(HomeAccessError):

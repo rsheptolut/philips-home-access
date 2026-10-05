@@ -19,8 +19,9 @@
       }
     },
     "error": {
-      "invalid_auth": "Invalid email or password",
-      "cannot_connect": "Failed to connect to the Philips Home Access service"
+      "invalid_auth": "Philips rejected the sign-in: {reason}",
+      "cannot_connect": "Failed to connect to the Philips Home Access service: {reason}",
+      "unknown": "Unexpected error: {reason}"
     },
     "abort": {
       "already_configured": "This account is already configured",
