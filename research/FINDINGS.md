@@ -197,10 +197,16 @@ app's, anyone's. Test: login -> T1; `check-user-token` and `query-device-attr`
 with T1 -> 200. Login again -> T2 (a different token). T1 -> **444 "Not logged
 in"** on both; T2 -> 200. T1's `exp` was still ~2h away, so a 444 on a token
 that has not expired means another login displaced it.
-- The WebSocket handshake with a displaced (or garbage) token fails with a bare
-  **HTTP 502** (`WSServerHandshakeError`), indistinguishable from an outage.
-  Only an HTTP call (444) tells them apart. A socket opened *before* the
-  displacement stayed open.
+- A WebSocket with a displaced token fails one of two ways: the handshake gets
+  a bare **HTTP 502** (`WSServerHandshakeError`; probe with a garbage token too),
+  or it connects and the server closes it at once with **code 1000** (seen on
+  HA's restart with a cached displaced token -- the same "connect, then
+  immediate close" pattern as the 2026-09-25 outage). Neither says "auth";
+  only an HTTP call (444) tells it apart from an outage. A socket opened
+  *before* the displacement stayed open.
+- v1.2.0 handles it: after a failed or short-lived socket, `check-user-token`;
+  its 444 drives the re-login. Live: restart at 23:57:35, socket closed, 444,
+  re-login, socket up again at 23:57:40.
 - So the phone app and HA on the same account sign each other out; the HA
   integration needs a dedicated account. Re-logins are serialized (one login
   serves every request that failed with the same token) and background ones
