@@ -59,15 +59,23 @@ class _NotJsonResp(_Resp):
 
 
 class _Session:
-    """Returns queued JSON bodies for post()/request() in order."""
-    def __init__(self, responses):
+    """Returns queued JSON bodies for post()/request() in order.
+
+    /datacenters (fetched once per discovery) answers `datacenters` without
+    consuming the queue, and isn't recorded in `calls`.
+    """
+    def __init__(self, responses, datacenters=None):
         self._responses = list(responses)
+        self._datacenters = datacenters if datacenters is not None else             {"code": 200, "data": []}
         self.calls = []
 
     def post(self, url, **kw):
         return self.request("POST", url, **kw)
 
     def request(self, method, url, **kw):
+        if url.endswith("/datacenters"):
+            d = self._datacenters
+            return d if isinstance(d, _Resp) else _Resp(d)
         self.calls.append((method, url, kw))
         r = self._responses.pop(0)
         return r if isinstance(r, _Resp) else _Resp(r)

@@ -19,7 +19,11 @@ from typing import Any
 import aiohttp
 
 from . import constants, state
-from .exceptions import CommandError, HomeAccessResponseError
+from .exceptions import (
+    CommandError,
+    HomeAccessConnectionError,
+    HomeAccessResponseError,
+)
 from .models import Lock
 from .realtime import Realtime
 from .session import Account
@@ -55,6 +59,8 @@ class HomeAccess:
         # only these (login returns tokens for datacenters that hold no locks
         # for us and 500/return nothing). Reset to re-scan all if they go dry.
         self._active_codes: list[str] | None = None
+        self._datacenters_checked = False
+        self._unknown_codes_logged: set[str] = set()
 
     # -- lifecycle ----------------------------------------------------------
     async def _ensure(self) -> None:
@@ -120,17 +126,61 @@ class HomeAccess:
             self._clients[(datacenter_code, host_code)] = c
         return c
 
+    # -- datacenters ----------------------------------------------------------
+    async def _ensure_datacenters(self) -> None:
+        """Learn datacenters the built-in map lacks, once per instance.
+
+        Login can hand out tokens for datacenters added after this code was
+        written (PhilipsNorthAmericaNew); without a host for them, their locks
+        were silently skipped. The cloud's /datacenters list is cached in the
+        state file, so a failed fetch still has the last good copy -- and the
+        built-in map always remains.
+        """
+        if self._datacenters_checked:
+            return
+        self._datacenters_checked = True
+        data = await state.async_load(self.settings.identifier)
+        entries = data.get("datacenters") or []
+        try:
+            fetched = await self.account.async_fetch_datacenters()
+        except HomeAccessConnectionError as e:
+            _LOGGER.debug("could not fetch datacenters (%s); using cached/built-in", e)
+        else:
+            if fetched != entries:
+                entries = fetched
+                data["datacenters"] = fetched
+                await state.async_save(self.settings.identifier, data)
+        added = constants.register_datacenters(entries)
+        if added:
+            _LOGGER.info("datacenters learned from the cloud: %s",
+                         {c: constants.DATACENTERS[c]["api_base"] for c in added})
+
     # -- devices ------------------------------------------------------------
     async def _scan(self, codes: list[str]) -> tuple[list[Lock], list[str]]:
-        """Query device/list across `codes`; return (locks, codes-worth-polling)."""
+        """Query device/list across `codes`; return (locks, codes-worth-polling).
+
+        One datacenter failing (down, or a new one answering in a way we don't
+        expect) must not hide the locks the others serve; only when every one
+        fails is it an error.
+        """
         found: dict[str, Lock] = {}
         hosts: list[str] = []      # datacenters that HOST a lock -> live data
         mirrors: list[str] = []    # datacenters that only echo someone else's
+        errors: list[HomeAccessConnectionError] = []
         for code in codes:
             if code not in constants.DATACENTERS:
+                if code not in self._unknown_codes_logged:
+                    self._unknown_codes_logged.add(code)
+                    _LOGGER.info("no host known for datacenter %s; its devices "
+                                 "can't be listed", code)
                 continue
-            resp = await self.client(code).post(constants.DEVICE_LIST_PATH,
-                                                json={"uid": self.account.uid})
+            try:
+                resp = await self.client(code).post(constants.DEVICE_LIST_PATH,
+                                                    json={"uid": self.account.uid})
+            except HomeAccessConnectionError as e:
+                _LOGGER.debug("device/list on %s failed: %s", code, e)
+                errors.append(e)
+                continue
             wifi = (resp.get("data") or {}).get("wifiList") or []
             hosted = False
             for rec in wifi:
@@ -155,6 +205,9 @@ class HomeAccess:
         # per poll and its copy loses de-duplication anyway. Fall back to mirrors
         # if nothing claims to host, so the poll set is never empty (and a
         # re-homed lock is still reachable until the next full re-scan).
+        if errors and not found and len(errors) == sum(
+                c in constants.DATACENTERS for c in codes):
+            raise errors[0]
         return list(found.values()), hosts or mirrors
 
     async def async_discover(self) -> list[Lock]:
@@ -167,6 +220,7 @@ class HomeAccess:
         everything if they ever come back empty.
         """
         await self._ensure_logged_in()
+        await self._ensure_datacenters()
         if self.settings.datacenter:
             codes = [self.settings.datacenter]
         else:

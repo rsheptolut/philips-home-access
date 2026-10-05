@@ -156,6 +156,19 @@ Routing (both unauthenticated, host `user-oneness.juziwulian.com`):
   - PhilipsNorthAmerica -> `https://api.idlespacetech.com:443/`, ws `wss://ws.idlespacetech.com`
   - PhilipsSingapore    -> `https://app-sg.cone-x.com/`, mqtt `mqtt-sg-app.cone-x.com:5883`
   - PhilipsOneness      -> `https://user-oneness.juziwulian.com/`
+  - **Re-captured 2026-10-05** (`homeaccess datacenters`): `data` is a list of
+    `{id, code, identitySupports, apiAddr, wsAddr, p2pAddr, mqttAddr}`, and now
+    has a 4th entry: **PhilipsNorthAmericaNew** -> `https://api.teeho.com`, ws
+    `ws://ws.teeho.com:18091` (plain ws), mqtt `mqtt-app.teeho.com:1883`. The NA
+    entry also lists `apiBackupAddrs` (api.homeaccesstech.com,
+    api.securelocktech.com) and `wsAddrList` (ws.homeaccesstech.com,
+    ws.securelocktech.com). Login returns a NorthAmericaNew token for every
+    account seen so far (ours included).
+  - device/list per host with our (NA-homed) account: idlespacetech and
+    app-sg.cone-x.com both list our devices; teeho and Oneness answer JSON
+    `code 500`; the Singapore token on the idlespacetech host also gets 500.
+  - The client registers datacenters it doesn't know from this reply (cached in
+    the state file), API host only: an unverified realtime socket is not used.
 
 Login:
 ```

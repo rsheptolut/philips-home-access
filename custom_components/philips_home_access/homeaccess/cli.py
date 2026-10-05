@@ -1,6 +1,7 @@
 """Command-line interface for the Philips Home Access client (async).
 
     python -m homeaccess login
+    python -m homeaccess datacenters                    # raw /datacenters reply
     python -m homeaccess devices
     python -m homeaccess status  <esn>
     python -m homeaccess lock    <esn>
@@ -149,6 +150,7 @@ async def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="homeaccess")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("login")
+    sub.add_parser("datacenters")
     sub.add_parser("devices")
     for name in ("status", "lock", "unlock"):
         sub.add_parser(name).add_argument("esn")
@@ -164,6 +166,9 @@ async def main(argv: list[str] | None = None) -> int:
                 await ha.async_login()
                 console.print(f"[green]Logged in[/] uid={ha.account.uid} "
                               f"datacenters={ha.account.datacenter_codes()}")
+            elif args.cmd == "datacenters":
+                await ha._ensure()
+                print(json.dumps(await ha.account.async_fetch_datacenters(), indent=1))
             elif args.cmd == "devices":
                 _print_locks(await ha.async_discover())
             elif args.cmd == "status":

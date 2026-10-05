@@ -13,6 +13,8 @@ DATACENTERS_PATH = "/datacenters"
 
 # --- Datacenters: code -> endpoints (from POST /datacenters) ----------------
 # api_base is used for device commands; ws_addr / mqtt_addr for realtime.
+# The verified core; register_datacenters() adds codes the cloud announces
+# later (e.g. PhilipsNorthAmericaNew, see research/FINDINGS.md).
 DATACENTERS: dict[str, dict[str, str]] = {
     "PhilipsNorthAmerica": {
         "api_base": "https://api.idlespacetech.com",
@@ -35,6 +37,37 @@ DEFAULT_DATACENTER = "PhilipsNorthAmerica"
 # `dataCenter` names that don't follow the "north-america" -> PhilipsNorthAmerica
 # pattern. The login reply pairs PhilipsSingapore with dataCenter "southeast-asia".
 DATACENTER_ALIASES = {"southeast-asia": "PhilipsSingapore"}
+
+
+def _host(addr: str) -> str:
+    """"https://api.idlespacetech.com:443/" -> "https://api.idlespacetech.com"."""
+    addr = (addr or "").strip().rstrip("/")
+    return addr[:-4] if addr.startswith("https://") and addr.endswith(":443") else addr
+
+
+def register_datacenters(entries: list[dict]) -> list[str]:
+    """Add datacenters from a /datacenters reply; return the codes added.
+
+    Only codes we don't know are added -- the built-in entries are verified,
+    and a reply can't silently re-point them. A new datacenter gets its API
+    host only: its realtime protocol is unverified (PhilipsNorthAmericaNew
+    advertises a plain ws:// socket), so it is polled, not listened to. The
+    advertised addresses are kept under *_advertised for diagnostics.
+    """
+    added = []
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        code, api = e.get("code"), _host(e.get("apiAddr", ""))
+        if not code or not api.startswith("https://") or code in DATACENTERS:
+            continue
+        DATACENTERS[code] = {
+            "api_base": api, "ws_addr": "", "mqtt_addr": "",
+            "ws_addr_advertised": e.get("wsAddr") or "",
+            "mqtt_addr_advertised": e.get("mqttAddr") or "",
+        }
+        added.append(code)
+    return added
 
 
 def datacenter_code_for(device_field: str, fallback: str = DEFAULT_DATACENTER) -> str:

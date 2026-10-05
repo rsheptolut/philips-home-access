@@ -174,6 +174,37 @@ class Account:
                      s.identifier, list(ts.tokens))
         return ts
 
+    async def async_fetch_datacenters(self) -> list[dict]:
+        """The cloud's datacenter list (unauthenticated POST /datacenters).
+
+        Raises HomeAccessConnectionError on any failure; callers fall back to
+        the built-in map.
+        """
+        s = self.settings
+        headers = {
+            "Content-Type": "application/json; charset=utf-8",
+            "User-Agent": constants.LOGIN_USER_AGENT,
+            "lang": s.language, "language": s.language,
+            "reqSource": "app", "timestamp": str(int(time.time())),
+        }
+        try:
+            async with self._session.post(
+                constants.AUTH_BASE + constants.DATACENTERS_PATH, json={},
+                headers=headers, ssl=None if s.verify_tls else False,
+                proxy=s.debug_proxy or None,
+            ) as resp:
+                text = await resp.text()
+        except aiohttp.ClientError as e:
+            raise HomeAccessConnectionError(f"datacenters request failed: {e}") from e
+        try:
+            data = json.loads(text)
+        except ValueError:
+            data = None
+        entries = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(entries, list):
+            raise HomeAccessResponseError(f"datacenters: unexpected reply {text[:120]!r}")
+        return entries
+
     # -- token access -------------------------------------------------------
     async def async_token_for(self, datacenter_code: str, *, auto: bool = True) -> str:
         """A token for a datacenter, re-logging in only if it's provably expired.
