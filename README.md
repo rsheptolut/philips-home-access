@@ -1,35 +1,30 @@
 # Philips Home Access — Home Assistant integration
 
 Control and monitor a Philips Home Access Wi-Fi smart lock from Home Assistant.
-The lock is a Kaadas/iRevo device on the Juzi Wulian ("Oneness") cloud; this
-integration talks to that cloud directly — no extra app or bridge — with
-real-time state updates.
 
-Unofficial and reverse-engineered; not affiliated with Philips, Versuni, Kaadas
-or Juzi Wulian. See [Legal](#legal).
+This integration talks to the official cloud, but without the need to involve the official app. Your lock need connection to the internet (directly or via Wifi gateway).
 
 ## Features
 
 - **Lock** — lock/unlock, with `locking…` / `unlocking…` transitions.
 - **Door** binary sensor — open/closed, from the magnetic contact.
 - **Battery** — the lock's, plus the door sensor's own where one is fitted.
-- **Real-time updates** over the cloud WebSocket: app, keypad and manual
-  operations appear within seconds, backed by a periodic poll.
-- **Auto-discovery** — every lock on the account becomes its own device. A
-  paired door sensor is treated as an accessory of its lock, not a second lock.
-- **Reauth** — prompts for the password if it changes.
+- **Real-time updates** over the cloud WebSocket (North American data center only): app, keypad and manual operations appear within seconds, with periodic poll as backup.
+- **Auto-discovery** — every lock on the account becomes its own device. A paired door sensor is treated as an accessory of its lock.
+- **Reauth** — reauthenticates as needed, prompts for the password if it changes.
 
 ## Install
 
-**HACS:** ⋮ → Custom repositories → add this repo, category Integration →
-install → restart Home Assistant.
+### Step 1
+
+**HACS:** ⋮ → Search for "Philips Home Access" → click Download → restart Home Assistant.
 
 **Manual:** copy `custom_components/philips_home_access/` into
 `config/custom_components/` and restart.
 
-Then go to Settings → Devices & Services → Add Integration → Philips Home
-Access and enter the account email, password, and the phone area code used at
-signup (e.g. `61`). Locks are discovered automatically.
+### Step 2
+
+Go to Settings → Devices & Services → Add Integration → Philips Home Access and enter the account email, password, and the phone area code of the country you selected at signup (for example `61` is for Australia). Locks that you previously linked to the app should get discovered automatically.
 
 ### Use a secondary account
 
@@ -43,7 +38,7 @@ Assistant those credentials instead — you can revoke them at any time without
 touching your main account. Check the shared account can actually lock and
 unlock: "family" usually can, "guest" may not.
 
-Also secure remote access to Home Assistant itself (strong password, 2FA).
+Also secure remote access to Home Assistant itself (strong password and maybe 2FA).
 Home Assistant Cloud only tunnels the HA UI; it doesn't expose this
 integration or its stored credentials directly.
 
@@ -53,15 +48,17 @@ integration or its stored credentials directly.
 - **Real-time is North America only.** Locks homed there get instant WebSocket
   pushes, with the poll as a 15-minute safety net that re-syncs on every
   reconnect. If the socket drops, or any device goes offline, polling speeds
-  up to 60 s until it is back.
+  up to 1 minute until it is back.
 - **Other datacenters are poll-only.** Singapore (MQTT) and Oneness have no push
-  channel implemented, so they poll every 60 s. Commands still work, but state
+  channel implemented in this integration, so they poll every 60 s. Commands still work, but state
   lags, and door open/close — an event-driven signal — may not show up reliably.
 - **Commands are verified on North America only.** Other datacenters' command
   hosts are untested.
-- **Battery is coarse** — it tends to sit at 100%, then step down.
+- **Battery is coarse** — it tends to sit at 100% for a long time, then step down. Property of the lock I'm using for testing.
 
 ## Debugging
+
+Add this if you want to see more info in the logs.
 
 ```yaml
 logger:
@@ -141,25 +138,18 @@ the realtime WebSocket).
 ## Roadmap
 
 - **MQTT realtime** for non-NA datacenters, so Singapore-homed locks get pushes
-  too. It can't be built or tested without access to such an account.
+  too. It can't be built or tested without access to such an account, which I don't have at the present moment. Reach out if you want to help add this.
 - **Local control over BLE.** The app has a BLE path (`createBleFrame`) with a
-  cloud-negotiated session key — a stretch goal for no-cloud operation.
-- **Brand and store listing.** Submitting to `home-assistant/brands` and
-  `hacs/default` would get a first-class icon and HACS search visibility.
-- **HA-level tests** for the config flow and coordinator; the client library
-  already has offline unit tests.
+  cloud-negotiated session key — a stretch goal for no-cloud operation. But there's a bunch of downsides of pursuing that path.
 
-Known fragility: the signing key is static and embedded, so if Philips rotates it
-in an app update it would need re-extracting. `msgId` ordering assumes the
-cloud's sequence doesn't reset across a WebSocket reconnect (the poll self-heals
-if it does).
+## Known issues
+
+- The signing key is static and embedded into the app (and this integration). So if the official app developer rotates it in an app update, it would need re-extracting from the new app version and updating this integration. If this happens to me I'll notice really quick and extract the key.
+- `msgId` ordering assumes the cloud's sequence doesn't reset across a WebSocket reconnect (the poll self-heals if it does).
 
 ## Legal
 
-Independent and unofficial; not affiliated with, authorized, or endorsed by
-Philips, Versuni, Kaadas, iRevo, Juzi Wulian, or any related company. Product and
-company names are the property of their owners and are used nominatively, to
-describe the hardware this interoperates with.
+Independent and unofficial; not affiliated with, authorized, or endorsed by anyone other than myself, an individual hobbyist and home automation enthusiast. Product and company names are the property of their owners and are used nominatively, to describe the hardware this interoperates with.
 
 It was built by reverse-engineering the official app for interoperability —
 letting hardware you own work with Home Assistant — and contains no code or other
