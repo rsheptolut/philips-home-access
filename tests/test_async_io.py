@@ -311,13 +311,13 @@ async def test_transport_reauths_once_on_444():
     async def token_provider():
         return "tok"
 
-    async def reauth():
-        reauths.append(1)
+    async def reauth(rejected_token, user_initiated=False):
+        reauths.append(rejected_token)
 
     sess = _Session([{"code": "444", "msg": "Not logged in"}, {"code": 200, "msg": "ok"}])
     http = HttpClient("https://x", token_provider=token_provider, reauth=reauth, session=sess)
     out = await http.post_signed("/p", {"esn": "RL"})
-    assert out["code"] == 200 and reauths == [1]
+    assert out["code"] == 200 and reauths == ["tok"]
 
 
 async def _tok():

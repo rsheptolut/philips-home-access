@@ -198,3 +198,40 @@ async def test_events_still_parse_and_dispatch(delays):
 
     await _run_briefly(rt, turns=10, on_event=got.append)
     assert any(e.kind == "setLock" and e.state == "unlocked" for e in got)
+
+
+# --- a displaced token is noticed and repaired ------------------------------
+async def test_failed_connect_checks_the_token(delays):
+    """A displaced token gets a bare 502 at the handshake; only an HTTP call
+    can tell that apart from an outage (and its 444 drives the re-login)."""
+    checks = []
+
+    async def check_token():
+        checks.append(1)
+
+    rt = Realtime(_Account(exc=aiohttp.ClientError("502")), _WSSession(),
+                  "PhilipsNorthAmerica", check_token=check_token)
+    await _run_briefly(rt, turns=20)
+    assert checks, "never checked whether the token was still live"
+
+
+async def test_token_check_failure_does_not_kill_the_listener(delays):
+    async def check_token():
+        raise HomeAccessConnectionError("re-login rate-limited")
+
+    rt = Realtime(_Account(exc=aiohttp.ClientError("502")), _WSSession(),
+                  "PhilipsNorthAmerica", check_token=check_token)
+    assert await _run_briefly(rt, turns=20)
+
+
+async def test_stable_session_skips_the_token_check(delays, monkeypatch):
+    monkeypatch.setattr(rt_mod, "STABLE_AFTER", 0)
+    checks = []
+
+    async def check_token():
+        checks.append(1)
+
+    rt = Realtime(_Account(), _WSSession(), "PhilipsNorthAmerica",
+                  check_token=check_token)
+    await _run_briefly(rt, turns=20)
+    assert not checks

@@ -5,6 +5,7 @@ passes HA's shared session); the CLI/api create and own one.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -21,6 +22,14 @@ _LOGGER = logging.getLogger(__name__)
 
 # Never log these values: session tokens, passwords, one-time codes.
 _SECRET_KEYS = {"token", "credential", "password", "confirmCode", "adminPwd"}
+
+# The cloud keeps ONE session per account: every login invalidates the tokens
+# of the one before (ours, the phone app's, anyone's -- verified live, see
+# research/FINDINGS.md). A re-login driven by background work (realtime
+# reconnect, poll) would sign out whoever displaced us, who signs back in and
+# displaces us again; so background re-logins wait this long after the last
+# attempt. A user's lock/unlock bypasses the limit.
+RELOGIN_MIN_INTERVAL = 600
 
 
 def _redact(obj: Any) -> Any:
@@ -42,6 +51,12 @@ class Account:
         # Cached tokenset is loaded lazily off the event loop (async_load_state).
         self.tokenset: TokenSet | None = None
         self._loaded = False
+        # One login at a time: concurrent 444s (poll + command + realtime) each
+        # asking for a login would, under single-session, kill each other's
+        # fresh tokens in a cascade.
+        self._login_lock = asyncio.Lock()
+        self._last_login_attempt: float | None = None   # time.monotonic()
+        self._warned_displaced: str | None = None        # token we warned about
 
     async def async_load_state(self) -> None:
         """Load the cached tokenset from disk (once, off the event loop)."""
@@ -54,6 +69,44 @@ class Account:
 
     # -- login --------------------------------------------------------------
     async def async_login(self) -> TokenSet:
+        """Log in now (initial sign-in, config flow, CLI). Serialized."""
+        async with self._login_lock:
+            return await self._login()
+
+    async def async_relogin(self, rejected_token: str | None = None, *,
+                            user_initiated: bool = False) -> None:
+        """Re-login after the cloud rejected `rejected_token` (a 444).
+
+        Serialized, and skipped when another caller already replaced the
+        rejected token while we waited for the lock -- one login serves every
+        request that failed with the same token. Background callers are
+        rate-limited (RELOGIN_MIN_INTERVAL); inside the window this raises
+        HomeAccessConnectionError, a transient failure, never an auth one.
+        """
+        async with self._login_lock:
+            if (rejected_token and self.tokenset
+                    and rejected_token not in self.tokenset.tokens.values()):
+                return  # someone re-logged in while we waited
+            exp = tokens.token_exp(rejected_token) if rejected_token else None
+            if (exp is not None and exp > time.time()
+                    and rejected_token != self._warned_displaced):
+                # rejected long before its expiry: another login replaced it
+                self._warned_displaced = rejected_token
+                _LOGGER.warning(
+                    "Another client signed in to the Philips account %s; "
+                    "re-signing in will sign it out. Use a dedicated account "
+                    "for Home Assistant (see README).", self.settings.identifier)
+            last = self._last_login_attempt
+            if (not user_initiated and last is not None
+                    and time.monotonic() - last < RELOGIN_MIN_INTERVAL):
+                raise HomeAccessConnectionError(
+                    f"re-login rate-limited (last attempt "
+                    f"{time.monotonic() - last:.0f}s ago)")
+            await self._login()
+
+    async def _login(self) -> TokenSet:
+        """The login request itself; callers hold _login_lock."""
+        self._last_login_attempt = time.monotonic()
         s = self.settings
         if not s.has_credentials:
             raise AuthError("Missing credentials (set HOMEACCESS_IDENTIFIER / "
@@ -131,8 +184,12 @@ class Account:
         """
         tok = self.tokenset.token_for(datacenter_code) if self.tokenset else None
         if auto and tokens.is_expired(tok):
-            await self.async_login()
-            tok = self.tokenset.token_for(datacenter_code) if self.tokenset else None
+            async with self._login_lock:
+                # re-check: a caller ahead of us in the lock may have renewed it
+                tok = self.tokenset.token_for(datacenter_code) if self.tokenset else None
+                if tokens.is_expired(tok):
+                    await self._login()
+                    tok = self.tokenset.token_for(datacenter_code) if self.tokenset else None
         if not tok:
             raise AuthError(f"No token for datacenter {datacenter_code}")
         return tok

@@ -97,7 +97,7 @@ class HomeAccess:
             c = HttpClient(
                 dc["api_base"],
                 token_provider=lambda code=datacenter_code: self.account.async_token_for(code),
-                reauth=self.account.async_login,
+                reauth=self.account.async_relogin,
                 session=self._session,
                 language=self.settings.language,
                 verify=self.settings.verify_tls,
@@ -237,7 +237,17 @@ class HomeAccess:
         return await self.client(l.datacenter_code).post_signed(
             constants.DTIM_WAKE_PATH, {"esnList": [esn]})
 
+    async def async_check_token(self, datacenter_code: str) -> None:
+        """Ask the cloud whether our token for `datacenter_code` is still live.
+
+        A rejected token comes back as 444, which the transport answers with a
+        (rate-limited) re-login -- so this both detects and repairs a session
+        another login displaced.
+        """
+        await self.client(datacenter_code).post_signed(constants.CHECK_TOKEN_PATH, {})
+
     # -- realtime -----------------------------------------------------------
     def realtime(self, datacenter_code: str = constants.DEFAULT_DATACENTER) -> Realtime:
         """Build a Realtime listener for a datacenter (call after login/discover)."""
-        return Realtime(self.account, self._session, datacenter_code)
+        return Realtime(self.account, self._session, datacenter_code,
+                        check_token=lambda: self.async_check_token(datacenter_code))

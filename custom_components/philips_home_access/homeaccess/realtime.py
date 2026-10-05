@@ -93,9 +93,16 @@ def _classify(d: dict) -> LockEvent | None:
 
 class Realtime:
     def __init__(self, account: Account, session: aiohttp.ClientSession,
-                 datacenter_code: str = constants.DEFAULT_DATACENTER) -> None:
+                 datacenter_code: str = constants.DEFAULT_DATACENTER, *,
+                 check_token: Callable[[], Awaitable[None]] | None = None) -> None:
         self.account = account
         self._session = session
+        # Called after a failed handshake or a short-lived session. The socket
+        # can't tell us why it was refused (a displaced token gets a bare 502),
+        # and async_token_for only renews a token past its expiry, so without
+        # this a token another login replaced kept realtime down for up to its
+        # full ~2h lifetime.
+        self._check_token = check_token
         self.dc = Datacenter.by_code(datacenter_code)
         if not self.dc.ws_addr:
             raise RuntimeError(
@@ -174,6 +181,12 @@ class Realtime:
             # (bad credentials, cloud outage) settles into a slow retry.
             if connected_at is not None and time.monotonic() - connected_at >= STABLE_AFTER:
                 delay = RECONNECT_DELAY
+            elif self._check_token is not None:
+                # refused or dropped at once: maybe our token was displaced
+                try:
+                    await self._check_token()
+                except Exception as e:  # noqa: BLE001 - best effort, retry anyway
+                    _LOGGER.debug("ws %s token check failed: %s", self.dc.code, e)
             _LOGGER.debug("ws %s reconnecting in %ss", self.dc.code, delay)
             await asyncio.sleep(delay)
             delay = min(delay * 2, RECONNECT_DELAY_MAX)

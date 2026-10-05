@@ -178,6 +178,24 @@ resp:    data.users[] = one {uid, token, code} per datacenter
 Implemented in `../auth.py`:  `python auth.py` (login), `show`, `ensure`.
 Creds come from env (`PHILIPS_IDENTIFIER`/`PHILIPS_CREDENTIAL`), never committed.
 
+### One session per account (verified live, 2026-10-05)
+Every login invalidates the tokens of the login before it -- ours, the phone
+app's, anyone's. Test: login -> T1; `check-user-token` and `query-device-attr`
+with T1 -> 200. Login again -> T2 (a different token). T1 -> **444 "Not logged
+in"** on both; T2 -> 200. T1's `exp` was still ~2h away, so a 444 on a token
+that has not expired means another login displaced it.
+- The WebSocket handshake with a displaced (or garbage) token fails with a bare
+  **HTTP 502** (`WSServerHandshakeError`), indistinguishable from an outage.
+  Only an HTTP call (444) tells them apart. A socket opened *before* the
+  displacement stayed open.
+- So the phone app and HA on the same account sign each other out; the HA
+  integration needs a dedicated account. Re-logins are serialized (one login
+  serves every request that failed with the same token) and background ones
+  rate-limited to one per 10 min.
+- Earlier note "multi-session works" (Realtime section) was about events from
+  the app's commands reaching our socket, which the open-socket finding above
+  explains; it is not evidence that two logins coexist.
+
 ## Realtime events (RESOLVED via DEX + live test)
 NA datacenter uses a **WebSocket** (not MQTT; MQTT is the Singapore datacenter).
 From `WebSocketService` (classes3.dex) and confirmed live in `../realtime.py`:

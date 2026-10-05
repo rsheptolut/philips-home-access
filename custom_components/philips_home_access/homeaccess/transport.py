@@ -3,7 +3,8 @@
 Async (aiohttp). Returns parsed JSON dicts; anything else (an HTML error page,
 an empty body) raises HomeAccessResponseError.
 `token_provider` and `reauth` are awaitables supplied by the session, so a fresh
-token (or a re-login) is picked up transparently.
+token (or a re-login) is picked up transparently. `reauth` is told which token
+was rejected, so concurrent rejections of the same token share one login.
 """
 from __future__ import annotations
 
@@ -26,13 +27,14 @@ class HttpClient:
     """Talks to one datacenter's api_base.
 
     token_provider() -> current token (awaited per request, so reauth is seen).
-    reauth()         -> re-login; raises on permanent/transient failure. Called
+    reauth(rejected_token, user_initiated=bool)
+                     -> re-login; raises on permanent/transient failure. Called
                         once on a 444 ("Not logged in") response, then retried.
     Retrying is safe because the request `sign` is independent of the token.
     """
 
     def __init__(self, api_base: str, token_provider: Callable[[], Awaitable[str]],
-                 reauth: Callable[[], Awaitable[Any]] | None = None, *,
+                 reauth: Callable[..., Awaitable[Any]] | None = None, *,
                  session: aiohttp.ClientSession,
                  language: str = constants.DEFAULT_LANGUAGE,
                  verify: bool = True, debug_proxy: str = "") -> None:
@@ -51,9 +53,9 @@ class HttpClient:
             "k-language": language,
         }
 
-    async def _headers_with_token(self, extra: dict | None) -> dict:
+    async def _headers_with_token(self, extra: dict | None) -> tuple[dict, str]:
         token = await self._token_provider()
-        return {**self._headers, constants.TOKEN_HEADER: token, **(extra or {})}
+        return {**self._headers, constants.TOKEN_HEADER: token, **(extra or {})}, token
 
     async def _send(self, method: str, url: str, headers: dict, kwargs: dict) -> dict:
         try:
@@ -76,16 +78,25 @@ class HttpClient:
             raise HomeAccessConnectionError(f"{method} {url} failed: {e}") from e
 
     async def request(self, method: str, path: str, *, headers: dict | None = None,
-                      _reauth: bool = True, **kwargs: Any) -> dict:
+                      _reauth: bool = True, user_initiated: bool = False,
+                      **kwargs: Any) -> dict:
+        """Send; on a 444, re-login once and retry.
+
+        user_initiated marks a request a person is waiting on (lock/unlock):
+        its re-login skips the background rate limit (see session.py).
+        """
         url = path if path.startswith("http") else self.api_base + path
         _LOGGER.debug("→ %s %s", method, path)
-        data = await self._send(method, url, await self._headers_with_token(headers), kwargs)
+        hdrs, token = await self._headers_with_token(headers)
+        data = await self._send(method, url, hdrs, kwargs)
         code = data.get("code") if isinstance(data, dict) else None
         _LOGGER.debug("← %s %s code=%s", method, path, code)
         if _reauth and self._reauth and _is_auth_failure(data):
-            _LOGGER.info("Token rejected (444); re-authenticating")
-            await self._reauth()  # raises AuthError / HomeAccessConnectionError
-            data = await self._send(method, url, await self._headers_with_token(headers), kwargs)
+            _LOGGER.info("Token rejected (444) on %s; re-authenticating", path)
+            # raises AuthError / HomeAccessConnectionError
+            await self._reauth(token, user_initiated=user_initiated)
+            hdrs, _ = await self._headers_with_token(headers)
+            data = await self._send(method, url, hdrs, kwargs)
             _LOGGER.debug("← %s %s code=%s (after reauth)", method, path,
                           data.get("code") if isinstance(data, dict) else None)
         return data
