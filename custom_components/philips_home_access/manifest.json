@@ -8,5 +8,5 @@
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/rsheptolut/philips-home-access/issues",
   "requirements": [],
-  "version": "1.1.1"
+  "version": "1.1.2"
 }
