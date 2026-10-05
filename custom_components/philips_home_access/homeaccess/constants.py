@@ -32,6 +32,10 @@ DATACENTERS: dict[str, dict[str, str]] = {
 }
 DEFAULT_DATACENTER = "PhilipsNorthAmerica"
 
+# `dataCenter` names that don't follow the "north-america" -> PhilipsNorthAmerica
+# pattern. The login reply pairs PhilipsSingapore with dataCenter "southeast-asia".
+DATACENTER_ALIASES = {"southeast-asia": "PhilipsSingapore"}
+
 
 def datacenter_code_for(device_field: str, fallback: str = DEFAULT_DATACENTER) -> str:
     """Map a device record's `dataCenter` (e.g. "north-america") to a code.
@@ -43,6 +47,8 @@ def datacenter_code_for(device_field: str, fallback: str = DEFAULT_DATACENTER) -
     """
     if not device_field:
         return fallback
+    if device_field in DATACENTER_ALIASES:
+        return DATACENTER_ALIASES[device_field]
     parts = device_field.replace("_", "-").split("-")
     code = "Philips" + "".join(p.capitalize() for p in parts)
     return code if code in DATACENTERS else fallback

@@ -64,3 +64,12 @@ def test_a_slave_lock_that_reports_a_bolt_stays_a_lock():
     rec = _accessory_record()
     rec["openStatus"] = 2
     assert _mk(rec).is_accessory is False
+
+
+def test_datacenter_field_maps_to_its_code():
+    from homeaccess.constants import datacenter_code_for
+    assert datacenter_code_for("north-america", "X") == "PhilipsNorthAmerica"
+    # the login reply pairs PhilipsSingapore with dataCenter "southeast-asia"
+    assert datacenter_code_for("southeast-asia", "X") == "PhilipsSingapore"
+    assert datacenter_code_for("", "PhilipsOneness") == "PhilipsOneness"
+    assert datacenter_code_for("mars-colony", "PhilipsOneness") == "PhilipsOneness"
