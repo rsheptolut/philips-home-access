@@ -24,7 +24,7 @@ from rich.console import Console
 
 from . import constants
 from .api import HomeAccess
-from .exceptions import AuthError, HomeAccessConnectionError
+from .exceptions import AuthError, CommandError, HomeAccessConnectionError
 from .models import Datacenter, Lock, LockEvent
 from .tracker import LockState, LockTracker
 
@@ -186,6 +186,9 @@ async def main(argv: list[str] | None = None) -> int:
                 await _monitor(ha, args.esn)
         except AuthError as e:
             console.print(f"[red]auth error:[/] {e}")
+            return 1
+        except CommandError as e:
+            console.print(f"[red]command refused:[/] {e}")
             return 1
         except HomeAccessConnectionError as e:
             console.print(f"[red]connection error:[/] {e}")

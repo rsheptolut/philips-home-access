@@ -414,6 +414,62 @@ async def test_direct_lock_commands_are_unchanged(sent_params):
     assert sent_params[-1] == {"esn": "RL", "userNumberId": 0}
 
 
+def _ha_with_sg_lock(*command_responses):
+    """Issue #1's shape: a lock homed in Singapore ("southeast-asia")."""
+    login = {"code": 200, "data": {"users": [
+        {"uid": "U1", "token": "opaque-sg", "code": "PhilipsSingapore"},
+        {"uid": "U1", "token": _decodable_token(), "code": "PhilipsNorthAmerica"}]}}
+    sg_list = {"code": 200, "data": {"wifiList": [
+        {"wifiSN": "SG1", "dataCenter": "southeast-asia", "openStatus": 1}]}}
+    sess = _Session([login, sg_list, _devlist(), *command_responses])
+    return HomeAccess(_settings(), session=sess), sess
+
+
+_HTML_404 = "<html>404 Not Found</html>"
+
+
+async def test_command_falls_back_to_the_na_host_when_home_serves_html():
+    ha, sess = _ha_with_sg_lock(_NotJsonResp(_HTML_404), {"code": 200, "msg": "ok"},
+                                {"code": 200, "msg": "ok"})
+    await ha.async_discover()
+    await ha.async_unlock("SG1")
+    home, fallback = sess.calls[-2], sess.calls[-1]
+    assert home[1].startswith("https://app-sg.cone-x.com/")
+    assert fallback[1].startswith("https://api.idlespacetech.com/")
+    assert fallback[2]["headers"]["token"] == "opaque-sg"
+    # learned: the next command goes straight to the route that worked
+    await ha.async_lock("SG1")
+    assert sess.calls[-1][1].startswith("https://api.idlespacetech.com/")
+    assert len(sess.calls) == 6
+
+
+async def test_command_tries_the_na_token_last():
+    ha, sess = _ha_with_sg_lock(_NotJsonResp(_HTML_404),
+                                {"code": 500, "msg": "unknown_error"},
+                                {"code": 200, "msg": "ok"})
+    await ha.async_discover()
+    await ha.async_unlock("SG1")
+    assert sess.calls[-1][2]["headers"]["token"] != "opaque-sg"
+
+
+async def test_command_failing_everywhere_names_every_host():
+    ha, _ = _ha_with_sg_lock(_NotJsonResp(_HTML_404), _NotJsonResp(_HTML_404),
+                             {"code": 500, "msg": "unknown_error"})
+    await ha.async_discover()
+    with pytest.raises(CommandError) as ei:
+        await ha.async_unlock("SG1")
+    assert "app-sg.cone-x.com" in str(ei.value)
+    assert "api.idlespacetech.com" in str(ei.value)
+
+
+async def test_a_json_refusal_from_home_is_final():
+    ha, sess = _ha_with_sg_lock({"code": 501, "msg": "device offline"})
+    await ha.async_discover()
+    with pytest.raises(CommandError, match="device offline"):
+        await ha.async_unlock("SG1")
+    assert sess.calls[-1][1].startswith("https://app-sg.cone-x.com/")
+
+
 # --- WebSocket -------------------------------------------------------------
 class _Msg:
     def __init__(self, data):

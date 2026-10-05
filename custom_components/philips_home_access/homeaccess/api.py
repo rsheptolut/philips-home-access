@@ -19,7 +19,7 @@ from typing import Any
 import aiohttp
 
 from . import constants, state
-from .exceptions import CommandError
+from .exceptions import CommandError, HomeAccessResponseError
 from .models import Lock
 from .realtime import Realtime
 from .session import Account
@@ -44,7 +44,10 @@ class HomeAccess:
         self._session = session
         self._own_session = session is None
         self.account: Account | None = None
-        self._clients: dict[str, HttpClient] = {}
+        self._clients: dict[tuple[str, str], HttpClient] = {}
+        # datacenter -> (token code, host code) a fallback command succeeded
+        # with; tried first from then on (in memory only).
+        self._command_routes: dict[str, tuple[str, str]] = {}
         # Device cache is loaded lazily off the event loop in _ensure().
         self._devices: list[Lock] = []
         self._cache_loaded = False
@@ -98,10 +101,13 @@ class HomeAccess:
             await self.account.async_login()
 
     # -- transport per datacenter -------------------------------------------
-    def client(self, datacenter_code: str) -> HttpClient:
-        c = self._clients.get(datacenter_code)
+    def client(self, datacenter_code: str, host_code: str | None = None) -> HttpClient:
+        """HTTP client using `datacenter_code`'s token, on `host_code`'s host
+        (the same datacenter's by default; see _command for why they differ)."""
+        host_code = host_code or datacenter_code
+        c = self._clients.get((datacenter_code, host_code))
         if c is None:
-            dc = constants.DATACENTERS[datacenter_code]
+            dc = constants.DATACENTERS[host_code]
             c = HttpClient(
                 dc["api_base"],
                 token_provider=lambda code=datacenter_code: self.account.async_token_for(code),
@@ -111,7 +117,7 @@ class HomeAccess:
                 verify=self.settings.verify_tls,
                 debug_proxy=self.settings.debug_proxy,
             )
-            self._clients[datacenter_code] = c
+            self._clients[(datacenter_code, host_code)] = c
         return c
 
     # -- devices ------------------------------------------------------------
@@ -225,22 +231,66 @@ class HomeAccess:
         return path, {"esn": l.esn, "mac": _normalize_mac(l.mac),
                       "masterSn": gw.esn, "userNumberId": l.user_number_id}
 
+    def _fallback_routes(self, code: str) -> list[tuple[str, str]]:
+        """(token code, host code) pairs to try after the lock's own host.
+
+        Issue #1: a Singapore-homed lock's host answered open-device with an
+        HTML 404. rjbogz's integration sends every command to the North America
+        host and has working reports, so try that host with the lock's own
+        token, then with the North America token.
+        """
+        na = constants.DEFAULT_DATACENTER
+        if code == na:
+            return []
+        routes = [(code, na)]
+        if self.account.tokenset and self.account.tokenset.token_for(na):
+            routes.append((na, na))
+        return routes
+
     async def _command(self, esn: str, open_: bool) -> dict[str, Any]:
         """Send an encrypted open/close; raise CommandError unless code 200.
 
         Accepted commands answer code 200 (observed live); anything else is the
         cloud refusing, and must not pass for success.
+
+        Only a reply that is not JSON at all -- the host has no such endpoint,
+        so no handler ever saw the command -- moves on to a fallback route; a
+        JSON refusal from the lock's own host is final. Retrying is safe either
+        way: open and close each name a target state, not a toggle.
         """
         l = await self.async_get(esn)
         path, params = self._command_request(l, open_)
-        _LOGGER.debug("%s %s via %s", path, esn, l.datacenter_code)
-        resp = await self.client(l.datacenter_code).post_encrypted(
-            path, params, user_initiated=True)
-        if str(resp.get("code")) != "200":
-            raise CommandError(
-                f"{path} for {esn} via {l.datacenter_code} refused: "
-                f"code={resp.get('code')!r} msg={resp.get('msg')!r}")
-        return resp
+        home = (l.datacenter_code, l.datacenter_code)
+        learned = self._command_routes.get(l.datacenter_code)
+        routes = [learned] if learned else []
+        routes += [r for r in [home, *self._fallback_routes(l.datacenter_code)]
+                   if r != learned]
+        failures: list[str] = []
+        for token_code, host_code in routes:
+            fallback = (token_code, host_code) != home
+            host = constants.DATACENTERS[host_code]["api_base"]
+            _LOGGER.debug("%s %s via %s (token %s)", path, esn, host, token_code)
+            try:
+                # a fallback's 444 means "wrong token for this host", not an
+                # expired session: don't re-login over it
+                resp = await self.client(token_code, host_code).post_encrypted(
+                    path, params, user_initiated=True, _reauth=not fallback)
+            except HomeAccessResponseError as e:
+                failures.append(f"{host} (token {token_code}): {e}")
+                continue
+            if str(resp.get("code")) == "200":
+                if fallback and learned != (token_code, host_code):
+                    _LOGGER.info("Commands for %s locks now go to %s with the %s "
+                                 "token", l.datacenter_code, host, token_code)
+                    self._command_routes[l.datacenter_code] = (token_code, host_code)
+                return resp
+            refusal = (f"{host} (token {token_code}): code={resp.get('code')!r} "
+                       f"msg={resp.get('msg')!r}")
+            if not fallback:
+                raise CommandError(f"{path} for {esn} refused by {refusal}")
+            failures.append(refusal)
+        raise CommandError(f"{path} for {esn} failed on every route: "
+                           + "; ".join(failures))
 
     async def async_status(self, esn: str) -> Lock:
         """Refresh and return the lock (use .open_status / .door / .battery)."""
