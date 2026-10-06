@@ -118,3 +118,39 @@ def test_ws_command_event_stamps_pending_for_expiry():
     tr = LockTracker(LockState("RL", bolt="locked"))
     tr.apply(LockEvent("setLock", "RL", state="unlocked", timestamp="10"))
     assert tr.state.pending_since is not None
+
+
+# --- the lock's timestamps can run backwards ------------------------------
+def _rec(msg_id, ts, kind, state):
+    return LockEvent(kind, "RL", state=state, msg_id=msg_id, timestamp=str(ts))
+
+
+def test_quick_unlock_then_lock_ends_locked():
+    """Live frames, 2026-10-06: a fast manual unlock->lock. The lock record was
+    stamped 3 s BEFORE the unlock it followed (msgId still counted up), was
+    dropped as stale, and HA showed unlocked while the door was locked."""
+    tr = LockTracker(LockState("RL", bolt="locked"))
+    tr.apply(_rec(956, 1791294218, "lock", "locked"))
+    tr.apply(_rec(961, 1791294228, "lock", "unlocked"))
+    tr.apply(_rec(963, 1791294228, "action", "unlocked"))
+    r = tr.apply(_rec(964, 1791294225, "lock", "locked"))
+    assert not r.stale and tr.state.bolt == "locked"
+    for mid, ts in ((966, 1791294225), (967, 1791294226)):
+        tr.apply(_rec(mid, ts, "action", "locked"))
+    assert tr.state.bolt == "locked"
+
+
+def test_same_second_pre_actuation_snapshot_still_loses():
+    tr = LockTracker(LockState("RL", bolt="locked"))
+    tr.apply(_rec(101, 500, "lock", "unlocked"))
+    r = tr.apply(_rec(99, 500, "action", "locked"))   # older msgId, same second
+    assert r.stale and tr.state.bolt == "unlocked"
+
+
+def test_msgid_reset_after_power_cycle_is_ordered_by_time():
+    """msgId restarts at 0 when the lock loses power; well apart in time, the
+    timestamp decides, so the lock's events aren't ignored after a battery swap."""
+    tr = LockTracker(LockState("RL", bolt="locked"))
+    tr.apply(_rec(5000, 1000, "lock", "unlocked"))
+    r = tr.apply(_rec(3, 1000 + 600, "lock", "locked"))
+    assert not r.stale and tr.state.bolt == "locked"

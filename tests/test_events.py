@@ -71,3 +71,13 @@ def test_wifistate_carries_online_flag():
     online = parse_event(_frame({"func": "wfevent", "body": {
         "lockId": "RL1", "eventtype": "wifiState", "state": "1"}}))
     assert online.kind == "wifiState" and online.state == "1"
+
+
+def test_partsinfo_belongs_to_the_accessory_not_the_relaying_lock():
+    """Live frame: lockId is the lock, eventparams.sn the door sensor whose
+    battery it reports -- applied to the lock, its battery flapped 99 <-> 86."""
+    ev = parse_event(_frame({"msgId": 950, "func": "partsInfo",
+        "timestamp": "1791294216", "body": {"eventtype": "wfevent",
+        "lockId": "RL21243710207", "eventparams": {
+            "sn": "DLS1243011792", "model": "W131S", "power": 90}}}))
+    assert ev.lock_id == "DLS1243011792" and ev.battery == 90

@@ -5,11 +5,15 @@ from an initial snapshot plus the realtime event stream.
 
 Ordering is the tricky part. Event timestamps are only second-granularity, and a
 lock/unlock emits a *pre-actuation* `action` snapshot carrying the OLD state at
-the same second as later events. So we order per facet by **(timestamp, msgId)**
--- msgId is the cloud's monotonic per-event sequence, which breaks same-second
-ties (the real confirmation has a higher msgId than the stale pre-actuation
-snapshot). We also drop protocol re-deliveries (identical timestamp+body, only
-msgId differs) so a re-delivered stale snapshot can't clobber fresher state.
+the same second as later events. Worse, the lock's timestamps can run backwards
+across a quick unlock->lock: a lock record stamped 3 s *before* the unlock it
+followed was seen live, and was dropped as stale -- HA showed unlocked while
+the door was locked. msgId, the lock's own per-event sequence, kept counting up
+through both. So per facet, events close in time are ordered by **msgId**, and
+only events further apart by **timestamp** (msgId restarts at 0 when the lock
+power-cycles, so it can't be trusted across a long gap). We also drop protocol
+re-deliveries (identical timestamp+body, only msgId differs) so a re-delivered
+stale snapshot can't clobber fresher state.
 
 This is a convenience for apps like the CLI monitor. The library still delivers
 every parsed event faithfully (parse_event / Realtime); a Home Assistant
@@ -23,6 +27,9 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from .models import LockEvent
+
+# Events this close in time (s) are ordered by msgId rather than timestamp.
+REORDER_WINDOW = 10
 
 # pending command -> the bolt state that clears it
 _PENDING_TARGET = {"unlocking": "unlocked", "locking": "locked"}
@@ -71,7 +78,12 @@ class LockTracker:
 
     def _accept(self, facet: str, key: tuple[int, int]) -> bool:
         last = self._order.get(facet)
-        return last is None or key > last
+        if last is None:
+            return True
+        (ts, mid), (last_ts, last_mid) = key, last
+        if mid and last_mid and abs(ts - last_ts) <= REORDER_WINDOW:
+            return mid > last_mid
+        return key > last
 
     def _is_redelivery(self, ev: LockEvent) -> bool:
         body = ev.raw.get("body") if ev.raw else None

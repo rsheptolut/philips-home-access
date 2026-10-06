@@ -63,7 +63,7 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
                       {esn: tr.state.summary() for esn, tr in self._trackers.items()})
         return {esn: tr.state for esn, tr in self._trackers.items()}
 
-    def _update_poll_interval(self) -> None:
+    def _update_poll_interval(self) -> bool:
         """Slow-poll only while realtime is genuinely carrying every lock.
 
         A datacenter with no WS at all is poll-only, and so is one whose socket
@@ -83,6 +83,8 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
                          "up" if ws_up else "down",
                          f", offline: {', '.join(offline)}" if offline else "")
             self.update_interval = interval
+            return True
+        return False
 
     # -- device roles -------------------------------------------------------
     def lock_esns(self) -> list[str]:
@@ -189,12 +191,19 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
                       res.stale, res.duplicate, res.changes, tr.state.summary())
         # Push to entities only when something actually changed (changes also
         # carries pending transitions, so setLock still surfaces locking/...).
-        if res.changes:
-            # a pushed connectivity change moves the poll rate too (set before
-            # async_set_updated_data, which reschedules on update_interval)
-            self._update_poll_interval()
+        if not res.changes:
+            return
+        if self._update_poll_interval():
+            # a pushed connectivity change moved the poll rate:
+            # async_set_updated_data reschedules the poll on the new interval
             self.async_set_updated_data(
                 {esn: t.state for esn, t in self._trackers.items()})
+        else:
+            # `data` holds these same LockState objects, so entities only need
+            # telling. async_set_updated_data would also restart the poll
+            # timer -- on a busy day pushing the safety-net poll, the one thing
+            # that corrects a wrong or missed event, back indefinitely.
+            self.async_update_listeners()
 
     async def async_stop_realtime(self) -> None:
         for task in self._ws_tasks:

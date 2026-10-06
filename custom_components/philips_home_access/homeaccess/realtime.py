@@ -64,7 +64,10 @@ def _classify(d: dict) -> LockEvent | None:
                          source="remote", raw=d)
 
     if func == "partsInfo":  # door-sensor accessory report
-        return LockEvent("parts", lock_id, battery=_int(p.get("power")), raw=d)
+        # lockId names the lock that relays it; the report (battery included)
+        # is the accessory's own, whose serial is eventparams.sn
+        return LockEvent("parts", p.get("sn") or lock_id,
+                         battery=_int(p.get("power")), raw=d)
 
     if func == "wfevent":
         ev = body.get("eventtype")
