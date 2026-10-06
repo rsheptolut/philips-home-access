@@ -12,6 +12,10 @@ PLATFORMS = [Platform.LOCK, Platform.BINARY_SENSOR, Platform.SENSOR]
 CONF_AREACODE = "areacode"
 DEFAULT_AREACODE = "61"
 
+# Options: esns of locks shown as state only (a read-only lock sensor instead
+# of a lock entity) -- for locks the cloud won't lock/unlock remotely.
+CONF_STATE_ONLY = "state_only"
+
 # Poll intervals. Where a lock's datacenter has a realtime WebSocket, that's the
 # primary update path and the poll is just a slow safety-net (also resynced on
 # every WS reconnect). Datacenters without realtime (MQTT-only, not implemented)

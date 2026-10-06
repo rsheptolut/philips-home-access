@@ -26,9 +26,12 @@ _LOGGER = logging.getLogger(__name__)
 class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
     """Holds the current state of every lock on the account."""
 
-    def __init__(self, hass: HomeAssistant, client: HomeAccess) -> None:
+    def __init__(self, hass: HomeAssistant, client: HomeAccess,
+                 state_only: set[str] | None = None) -> None:
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=SLOW_POLL_INTERVAL)
         self.client = client
+        # locks the user marked state only (options): no lock entity for them
+        self.state_only: set[str] = state_only or set()
         self.locks: dict[str, Lock] = {}          # esn -> latest Lock (metadata)
         self._trackers: dict[str, LockTracker] = {}
         self._realtimes: dict[str, Realtime] = {}   # datacenter code -> listener

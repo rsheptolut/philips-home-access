@@ -31,5 +31,20 @@
       "already_configured": "This account is already configured",
       "reauth_successful": "Re-authentication was successful"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Lock options",
+        "description": "Some locks can't be locked or unlocked remotely; the Philips app shows no buttons for them. Show those as state only: a read-only lock sensor instead of a lock.",
+        "data": {
+          "state_only": "State-only locks"
+        }
+      }
+    },
+    "abort": {
+      "not_loaded": "The integration isn't running; fix that first, then try again.",
+      "no_locks": "No locks were found on this account."
+    }
   }
 }

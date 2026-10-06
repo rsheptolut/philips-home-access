@@ -8,6 +8,10 @@ This integration talks to the official cloud, but without the need to involve th
 
 - **Lock** — lock/unlock, with `locking…` / `unlocking…` transitions (confirmed
   by realtime events, or by a quick follow-up poll where there are none).
+- **State-only locks** — some locks can't be locked or unlocked remotely (the
+  Philips app shows no buttons for them). Mark those under Settings → Devices &
+  services → Philips Home Access → **Configure**, and they get a read-only lock
+  sensor (locked/unlocked) instead of a lock you can't use.
 - **Door** binary sensor — open/closed, from the magnetic contact.
 - **Battery** — the lock's, plus the door sensor's own where one is fitted.
 - **Real-time updates** over the cloud WebSocket (North American data center only): app, keypad and manual operations appear within seconds, with periodic poll as backup.

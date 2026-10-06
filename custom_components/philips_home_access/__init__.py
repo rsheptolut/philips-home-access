@@ -7,9 +7,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CONF_AREACODE, DEFAULT_AREACODE, DOMAIN, PLATFORMS
+from .const import CONF_AREACODE, CONF_STATE_ONLY, DEFAULT_AREACODE, DOMAIN, PLATFORMS
 from .coordinator import PhilipsCoordinator
 from .entity import device_info_for
 from .homeaccess import HomeAccess, Settings
@@ -32,16 +33,59 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         areacode=entry.data.get(CONF_AREACODE, DEFAULT_AREACODE),
     )
     client = HomeAccess(settings, session=async_get_clientsession(hass))
-    coordinator = PhilipsCoordinator(hass, client)
+    coordinator = PhilipsCoordinator(
+        hass, client, state_only=set(entry.options.get(CONF_STATE_ONLY, [])))
 
     # Logs in + discovers; raises ConfigEntryAuthFailed / ConfigEntryNotReady.
     await coordinator.async_config_entry_first_refresh()
     _register_devices(hass, entry, coordinator)
+    _apply_state_only(hass, coordinator)
     await coordinator.async_start_realtime()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     return True
+
+
+async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Rebuild the entities when the state-only choice changes."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _apply_state_only(hass: HomeAssistant, coordinator: PhilipsCoordinator) -> None:
+    """Disable whichever of a lock's two faces doesn't apply.
+
+    A state-only lock has a read-only lock sensor instead of a lock entity, and
+    vice versa. Disabling (not deleting) the unused one keeps its entity id and
+    any customisation should the choice be reversed. Only entities this
+    integration disabled are re-enabled -- one the user disabled stays so.
+    """
+    reg = er.async_get(hass)
+    for esn in coordinator.lock_esns():
+        state_only = esn in coordinator.state_only
+        _set_enabled(hass, reg, "lock", f"{esn}_lock", not state_only)
+        _set_enabled(hass, reg, "binary_sensor", f"{esn}_lock_state", state_only)
+
+
+def _set_enabled(hass: HomeAssistant, reg: er.EntityRegistry, platform: str,
+                 unique_id: str, enabled: bool) -> None:
+    entity_id = reg.async_get_entity_id(platform, DOMAIN, unique_id)
+    if entity_id is None:
+        return
+    disabled_by = reg.async_get(entity_id).disabled_by
+    if enabled and disabled_by is er.RegistryEntryDisabler.INTEGRATION:
+        reg.async_update_entity(entity_id, disabled_by=None)
+    elif not enabled and disabled_by is None:
+        reg.async_update_entity(entity_id,
+                                disabled_by=er.RegistryEntryDisabler.INTEGRATION)
+        disabled_by = er.RegistryEntryDisabler.INTEGRATION
+    # The reload leaves a "restored, unavailable" placeholder for an entity no
+    # platform adds any more; it would linger until the next restart.
+    st = hass.states.get(entity_id)
+    if (disabled_by is er.RegistryEntryDisabler.INTEGRATION and st is not None
+            and st.attributes.get("restored")):
+        hass.states.async_remove(entity_id)
 
 
 def _register_devices(hass: HomeAssistant, entry: ConfigEntry,

@@ -6,11 +6,18 @@ from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
+from homeassistant.core import callback
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CONF_AREACODE, DEFAULT_AREACODE, DOMAIN
+from .const import CONF_AREACODE, CONF_STATE_ONLY, DEFAULT_AREACODE, DOMAIN
 from .homeaccess import AuthError, HomeAccess, HomeAccessConnectionError, Settings
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,6 +38,11 @@ def _clean_areacode(value: str) -> str:
 
 class PhilipsConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the config + reauth flow."""
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        return PhilipsOptionsFlow()
 
     async def _verify(self, data: Mapping[str, Any]) -> str:
         """Return the account uid, or raise AuthError / HomeAccessConnectionError."""
@@ -105,3 +117,26 @@ class PhilipsConfigFlow(ConfigFlow, domain=DOMAIN):
                                       **reason},
             errors=errors,
         )
+
+
+class PhilipsOptionsFlow(OptionsFlow):
+    """Pick the locks to show as state only (no lock/unlock)."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        coordinator = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+        if coordinator is None:
+            return self.async_abort(reason="not_loaded")
+        locks = {esn: (coordinator.locks[esn].nickname or esn)
+                 for esn in coordinator.lock_esns() if esn in coordinator.locks}
+        if not locks:
+            return self.async_abort(reason="no_locks")
+        if user_input is not None:
+            return self.async_create_entry(
+                data={CONF_STATE_ONLY: list(user_input.get(CONF_STATE_ONLY, []))})
+        current = [esn for esn in self.config_entry.options.get(CONF_STATE_ONLY, [])
+                   if esn in locks]
+        return self.async_show_form(step_id="init", data_schema=vol.Schema({
+            vol.Optional(CONF_STATE_ONLY, default=current): cv.multi_select(locks),
+        }))
