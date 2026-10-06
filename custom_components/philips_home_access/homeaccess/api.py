@@ -25,6 +25,7 @@ from .exceptions import (
     HomeAccessResponseError,
 )
 from .models import Lock
+from .mqtt import MqttRealtime
 from .realtime import Realtime
 from .session import Account
 from .settings import Settings, load as load_settings
@@ -383,3 +384,7 @@ class HomeAccess:
         """Build a Realtime listener for a datacenter (call after login/discover)."""
         return Realtime(self.account, self._session, datacenter_code,
                         check_token=lambda: self.async_check_token(datacenter_code))
+
+    def mqtt(self, datacenter_code: str = "PhilipsSingapore", **kw: Any) -> MqttRealtime:
+        """Build an MQTT listener for a datacenter (call after login/discover)."""
+        return MqttRealtime(self.account, datacenter_code, **kw)

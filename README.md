@@ -112,6 +112,7 @@ python -m homeaccess devices                 # discover locks
 python -m homeaccess monitor                 # live events + lock/unlock prompt
 python -m homeaccess watch --raw             # dump raw event JSON
 python -m homeaccess datacenters             # the cloud's datacenter list
+python -m homeaccess mqtt-watch              # capture Singapore MQTT pushes to a log file
 ```
 
 ## Library (async)

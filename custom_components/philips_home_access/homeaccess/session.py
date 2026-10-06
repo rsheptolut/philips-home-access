@@ -169,6 +169,7 @@ class Account:
             uid=users[0].get("uid", ""),
             tokens={u["code"]: u["token"] for u in users},
             obtained=int(time.time()),
+            uids={u["code"]: u.get("uid", "") for u in users},
         )
         self.tokenset = ts
         await self._persist_tokenset()
@@ -230,6 +231,9 @@ class Account:
     @property
     def uid(self) -> str:
         return self.tokenset.uid if self.tokenset else ""
+
+    def uid_for(self, datacenter_code: str) -> str:
+        return self.tokenset.uid_for(datacenter_code) if self.tokenset else ""
 
     def datacenter_codes(self) -> list[str]:
         return list(self.tokenset.tokens) if self.tokenset else []

@@ -26,17 +26,24 @@ class TokenSet:
     uid: str
     tokens: dict[str, str]          # datacenter_code -> token
     obtained: int = 0               # epoch seconds
+    # datacenter_code -> that datacenter's own uid for the account. The MQTT
+    # broker authenticates with it (username), and it needn't match `uid`.
+    uids: dict[str, str] = field(default_factory=dict)
 
     def token_for(self, datacenter_code: str) -> str | None:
         return self.tokens.get(datacenter_code)
 
+    def uid_for(self, datacenter_code: str) -> str:
+        return self.uids.get(datacenter_code) or self.uid
+
     def to_dict(self) -> dict[str, Any]:
-        return {"uid": self.uid, "tokens": self.tokens, "obtained": self.obtained}
+        return {"uid": self.uid, "tokens": self.tokens, "obtained": self.obtained,
+                "uids": self.uids}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "TokenSet":
         return cls(uid=d.get("uid", ""), tokens=d.get("tokens", {}),
-                   obtained=d.get("obtained", 0))
+                   obtained=d.get("obtained", 0), uids=d.get("uids") or {})
 
 
 # Record fields the device cache keeps (to_dict): enough to tell a device's role

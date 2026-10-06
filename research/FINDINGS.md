@@ -75,11 +75,47 @@ can also be dumped straight from the device.
 
 ---
 
-## 2. MQTT  (secondary — relevant for a future local / cloudless HA path)
-- `mqtt.js` bundled (`createMQTTClientManager`). Not yet mapped: broker host,
-  auth (likely token/cert), topic scheme, and whether message payloads are
-  encrypted or just TLS-wrapped. Worth tracing if you want push/state without
-  cloud polling.
+## 2. MQTT  (Singapore datacenter realtime; mapped 2026-10-07)
+It's still cloud: the Singapore datacenter's push channel, the counterpart of
+the NA WebSocket. Not a local path.
+
+From jadx (`com/example/servicedata/common/mqtt/MqttService`, `defpackage/pf7`,
+`ih2.j()`, `fx0.d()/e()`) and the RN bundle (`KDS_MQTT_EVENT` listeners,
+`updateDeviceState`, `updateDeviceStateByThing`):
+- **Broker:** `tcp://mqtt-sg-app.cone-x.com:5883` (`ih2.j()`; the PhilipsSingapore
+  `mqttAddr` in `/datacenters`). Plain TCP, MQTT 3.1.1 (Paho), **no TLS**.
+- **Auth:** client id `app:<uid>`, username `<uid>`, password `<token>`. The uid
+  and token are the login's PhilipsSingapore entry (the app stores them as
+  `SoutheastUid` / `SoutheastToken`). There's no other secret, as on the WS.
+  Paho options: keepalive 60, cleanSession false, auto-reconnect.
+  The RN mqtt.js client does the same (keepalive 5, qos 2).
+- **Subscribes (QoS 2):**
+  - `/<uid>/rpc/reply` carries classic Wi-Fi lock events, the `WifiLockOperationBean`
+    shape: `{func:"wfevent", msgtype, wfId, lockId, devtype, eventtype,
+    eventparams:{eventType, eventSource, eventCode, userID, appID}, msgId,
+    timestamp}`. It's the same as the WS frame but flat, with no `body` wrapper.
+  - `/kiot/<uid>/app/down` carries "thing-model" devices: `{cmd:"report", did,
+    body:{properties:[{name, value}]}}` and `{cmd:"device_state", did,
+    body:{connectState:"online"|"offline"}}`. The properties are:
+    - `p_lock_status` (1 = locked);
+    - `p_battery_info` (`[[{name:"p_battery_electricity", value}]]`);
+    - `p_mode_defense`, `p_model_safe`, `p_solar_panels_connection_status`.
+- **Publishing** (commands) goes to `/request/app/func` and `/<uid>/rpc/call`.
+  Not needed for a listener.
+- The RN `getLockState` treats `eventtype:"record"`, `eventType 1`, `eventCode 1`
+  as locked, whatever the source. NA manual records use 8/9, so verify against
+  real Singapore traffic.
+
+**Verified live** (our NA account, which also gets a PhilipsSingapore token):
+- The broker accepts uid/token and grants both subscriptions.
+- A bogus, empty, or NA token gets CONNACK 5 (not authorized), so the password
+  is checked.
+- **Displacement:** an established connection survived another login for at
+  least 110 s. Reconnecting with the displaced token is refused (5), so a
+  refusal triggers a re-login.
+- No messages came, since our locks are NA. The payload shapes above are still
+  from code only. `homeaccess mqtt-watch` captures them for a tester
+  (issue #1).
 
 ## 3. BLE  (local channel — proxy can't see it)
 - Custom binary framing: **`createBleFrame`** @970040. 16-bit header packs:
@@ -314,6 +350,7 @@ manual changes.
    the device (MMKV/SQLCipher) so the Python tool can re-sign requests.
 2. **HTTP:** confirm the login/token endpoint from a proxy capture; wire it into
    `../auth.py`.
-3. **MQTT:** map broker + topics + payload crypto for a cloudless HA bridge.
+3. **MQTT:** mapped and auth verified (section 2); next, capture real Singapore
+   traffic (`homeaccess mqtt-watch`) and wire MqttRealtime into the coordinator.
 4. **BLE:** only if you want local control — reverse the full frame + the
    secretKey/kb/sessionKey derivation.
