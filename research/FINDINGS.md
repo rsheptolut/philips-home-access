@@ -237,7 +237,9 @@ Event frames (text JSON), decoded from live tests:
   `openStatus` (bolt: 1=locked/2=unlocked), `power` (**battery %**), plus config
   (autoLockTime, volume, etc.). The device emits 2-3 identical ones per change.
 - `func:"partsInfo"` = door-sensor accessory report (`sn` "DLS...", model W131S),
-  carries `power` (battery) and `partsState`.
+  carries `power` (battery) and `partsState`. `lockId`/`wfId` name the lock that
+  relays it; the report is the accessory's (`eventparams.sn`). Until v1.2.1 its
+  battery was applied to the lock, which flapped between 99 and the sensor's ~87.
 - Correlates with device/list `openStatus`: **1 = locked, 2 = unlocked**
   (`openStatusTime` = epoch of last change); device/list `power` = battery %.
 
@@ -254,26 +256,52 @@ each change to remote-vs-manual and to a user slot. A periodic device/list poll 
 still a reasonable belt-and-suspenders fallback for HA, but not required for
 manual changes.
 
-### Event ordering & idempotency (drove the v1.0.1 stuck-state fix)
-- Top-level `timestamp` is **seconds only** -> too coarse to order events that
-  happen within the same second (a fast unlock->lock).
-- Top-level `msgId` is the cloud's **monotonic per-event sequence** for the
-  `wfevent`/`partsInfo` stream (e.g. 3340, 3341, 3343, 3346 …) — use it as the
-  tiebreaker: order by **(timestamp, msgId)**. NOTE: `setLock` frames use a
-  *different* (large, ~random) msgId space, but they only ever set the optimistic
-  "pending" hint, never the bolt, so they don't participate in facet ordering.
-  Open question: whether msgId resets across a WS reconnect (the poll self-heals
-  either way).
+### Event ordering & idempotency (v1.0.1 stuck-state fix, revised in v1.2.1)
+- Top-level `timestamp` is the **lock's own clock, seconds only**, and is not
+  even monotonic: on a fast manual unlock->lock (2026-10-06) the lock record
+  was stamped 3 s *before* the unlock it followed (`msgId` 961 unlock ts …228,
+  then 964 lock ts …225). After a battery swap the clock has also come back a
+  day behind until it resynced.
+- Top-level `msgId` is the **lock's own per-event sequence** for the
+  `wfevent`/`partsInfo` stream (e.g. 961, 963, 964, 966 …). It kept counting up
+  through the out-of-order timestamps above, but it **restarts at 0 when the
+  lock power-cycles**, so it can't be trusted across a long gap. NOTE: `setLock`
+  frames use a *different* (large, ~random) msgId space, but they only ever set
+  the optimistic "pending" hint, never the bolt, so they don't participate in
+  facet ordering.
+- So per facet: events within **10 s** of each other are ordered by `msgId`;
+  further apart, by `timestamp`. (v1.0.1-v1.2.0 ordered by (timestamp, msgId),
+  which dropped the 964 lock record above as stale -- HA showed unlocked while
+  the door was locked, until the next poll.)
+- device/list `openStatusTime` equals the timestamp of the record that set it,
+  and the cloud keeps the record that *arrived* last (it reported locked after
+  the 961/964 sequence) -- consistent with msgId order.
 - The **pre-actuation `action` snapshot carries the OLD bolt state** at the same
   second as the command, with a LOWER msgId than the real confirming `lock`
-  record. Ordering by (timestamp, msgId) makes the confirmation win; a naive
-  `timestamp >=` guard lets the stale snapshot regress the bolt (the bug).
+  record. msgId ordering makes the confirmation win; a naive `timestamp >=`
+  guard lets the stale snapshot regress the bolt (the v1.0.1 bug).
 - **Re-deliveries** are identical `timestamp`+`body` with a *new, higher* msgId.
   Dedupe on (timestamp, body) BEFORE ordering, else a re-delivered stale snapshot
   (higher msgId) would wrongly win.
 - Auto-lock (autoLockTime) wasn't separately verified to emit a `lock` record; we
   keep `action` snapshots as a bolt source (properly ordered) so it's covered
   regardless, and the poll backstops it.
+
+## Device capabilities: `functionSet` and `isRemoteUnlock` (from jadx, 2026-10-06)
+- `isRemoteUnlock` is **not a capability**: it is the "Remote unlock" on/off
+  **setting** (`setting_remote_unlock`, `PhilipsRemoteUnlockActivity`), shown in
+  the Wi-Fi lock's "More" settings as On/Off. The row only appears when the
+  lock's feature list contains feature **285** (`sy4.Q0`). Our Xata2 (RL2,
+  North America) reads 0 yet locks/unlocks remotely fine.
+- `functionSet` is a **lookup code, not a bitmask**: `sy4.i(functionSet)` maps it
+  to a list of feature IDs, preferring a server-provided list cached as
+  `PHL_LOCK_FUNCTION_SET_NO_<n>`, then the built-in table `h41.m`. Every
+  `sy4.X(functionSet)` check is "does that list contain feature N".
+- Built-in lists: **165** (our RL2) and **167** (issue #1's AP5 / W9A15,
+  southeast-asia) both lack 285, so the setting row would come from a
+  server-provided list if at all. Which feature gates the app's own lock/unlock
+  buttons is not traced yet (start from the callers of the open-device Retrofit
+  method in `kk5`: `j6d`, `pbc`, `y0d`).
 
 ## Tooling produced
 - `index.android.bundle` — extracted Hermes bytecode (HBC v96).

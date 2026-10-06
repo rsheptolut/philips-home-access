@@ -165,9 +165,11 @@ the realtime WebSocket).
 ## Known issues
 
 - The signing key is static and embedded into the app (and this integration). So if the official app developer rotates it in an app update, it would need re-extracting from the new app version and updating this integration. If this happens to me I'll notice really quick and extract the key.
-- Events are ordered by the lock's own `timestamp` and `msgId`. After a battery
-  swap the lock's clock can come back wrong (seen a day behind) and its `msgId`
-  restarts at 0, so its events can be ignored as stale for a while; the poll
+- Events are ordered by the lock's own sequence number (`msgId`) when they are
+  close in time, and by its clock (`timestamp`) when further apart: the clock
+  can run a few seconds backwards, and the sequence restarts when the lock
+  loses power. After a battery swap the clock can also come back wrong (seen a
+  day behind), so its events can be ignored as stale for a while; the poll
   still corrects the state.
 
 ## Legal
