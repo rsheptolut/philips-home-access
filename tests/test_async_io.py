@@ -559,3 +559,13 @@ async def test_ws_awaits_on_connect():
     with pytest.raises(asyncio.CancelledError):
         await task
     assert connects, "on_connect should fire on connect"
+
+
+async def test_login_strips_stray_whitespace_from_the_email():
+    # Live: "you@example.com " is a different account to the cloud -> 1004
+    sess = _Session([{"code": 200, "data": {"users": [
+        {"uid": "U1", "token": "t", "code": "PhilipsNorthAmerica"}]}}])
+    await Account(Settings(identifier=" a@b.com \t", credential=" pw "), sess).async_login()
+    body = sess.calls[0][2]["json"]
+    assert body["identifier"] == "a@b.com"
+    assert body["credential"] == " pw ", "a password may legitimately hold spaces"

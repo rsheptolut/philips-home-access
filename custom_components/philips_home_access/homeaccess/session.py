@@ -118,7 +118,9 @@ class Account:
             "lang": s.language, "language": s.language,
             "reqSource": "app", "timestamp": str(int(time.time())),
         }
-        body = {"identifier": s.identifier, "credential": s.credential,
+        # an email with a stray space (phone keyboards add one) is a different
+        # account to the cloud: 1004 "Account does not exist"
+        body = {"identifier": s.identifier.strip(), "credential": s.credential,
                 "areacode": s.areacode}
         try:
             async with self._session.post(

@@ -68,6 +68,7 @@ class PhilipsConfigFlow(ConfigFlow, domain=DOMAIN):
         reason = {"reason": ""}
         if user_input is not None:
             user_input = {**user_input,
+                          CONF_EMAIL: user_input[CONF_EMAIL].strip(),
                           CONF_AREACODE: _clean_areacode(user_input[CONF_AREACODE])}
             if not user_input[CONF_AREACODE].isdigit():
                 errors[CONF_AREACODE] = "invalid_areacode"
