@@ -147,6 +147,14 @@ def test_same_second_pre_actuation_snapshot_still_loses():
     assert r.stale and tr.state.bolt == "unlocked"
 
 
+def test_gwinf_tracks_plug_power_state():
+    tr = LockTracker(LockState("P16C255211111"))
+    r = tr.apply(LockEvent("gwInf", "P16C255211111", state="on", timestamp="1"))
+    assert tr.state.power == "on" and "power=on" in r.changes
+    r = tr.apply(LockEvent("gwInf", "P16C255211111", state="off", timestamp="2"))
+    assert tr.state.power == "off" and "power=off" in r.changes
+
+
 def test_msgid_reset_after_power_cycle_is_ordered_by_time():
     """msgId restarts at 0 when the lock loses power; well apart in time, the
     timestamp decides, so the lock's events aren't ignored after a battery swap."""

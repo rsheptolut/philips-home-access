@@ -48,10 +48,14 @@ class LockState:
     pending: str | None = None     # "locking" | "unlocking" | None
     online: bool = True            # cloud's view of the device's WiFi connectivity
     pending_since: float | None = None  # time.monotonic() when pending was set
+    power: str | None = None       # "on" | "off" -- a gateway used as a smart outlet
 
     def summary(self) -> str:
-        bat = f"{self.battery}%" if self.battery is not None else "?"
-        s = f"lock={self.bolt or '?'} door={self.door or '?'} battery={bat}"
+        if self.power is not None:  # a gateway/plug: no bolt, door or battery
+            s = f"power={self.power}"
+        else:
+            bat = f"{self.battery}%" if self.battery is not None else "?"
+            s = f"lock={self.bolt or '?'} door={self.door or '?'} battery={bat}"
         if not self.online:
             s += " OFFLINE"
         return s + (f" ({self.pending}…)" if self.pending else "")
@@ -196,5 +200,11 @@ class LockTracker:
             if ev.battery != self.state.battery:
                 self.state.battery = ev.battery
                 res.changes.append(f"battery={ev.battery}")
+
+        # gateway/plug relay state, from gwInf status reports
+        if ev.kind == "gwInf" and ev.state in ("on", "off"):
+            if ev.state != self.state.power:
+                self.state.power = ev.state
+                res.changes.append(f"power={ev.state}")
 
         return res

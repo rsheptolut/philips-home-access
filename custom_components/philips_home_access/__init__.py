@@ -93,9 +93,11 @@ def _register_devices(hass: HomeAssistant, entry: ConfigEntry,
     """Create every device up front, then hang each off its parent.
 
     An accessory belongs under the lock it is paired to, and a gateway lock
-    under its gateway (which has no entities, so nothing else would create it).
-    Linking by device id replaces DeviceInfo's deprecated via_device, which
-    also needed the parent to exist before the child's entities were added.
+    under its gateway. A gateway with no lock of its own (no platform would
+    otherwise create it) still needs registering up front for its own
+    entities (e.g. its plug power sensor) to attach to. Linking by device id
+    replaces DeviceInfo's deprecated via_device, which also needed the parent
+    to exist before the child's entities were added.
     """
     reg = dr.async_get(hass)
     devices = {esn: reg.async_get_or_create(config_entry_id=entry.entry_id,

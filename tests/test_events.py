@@ -73,6 +73,16 @@ def test_wifistate_carries_online_flag():
     assert online.kind == "wifiState" and online.state == "1"
 
 
+def test_gwinf_carries_plug_power_state():
+    on = parse_event(_frame({"func": "gwInf", "body": {
+        "wfId": "P16C255211111", "devtype": "gateway", "eventtype": "gwBleEvent",
+        "eventparams": {"powerStatus": 1, "model": "SGAHA"}}}))
+    assert on.kind == "gwInf" and on.lock_id == "P16C255211111" and on.state == "on"
+    off = parse_event(_frame({"func": "gwInf", "body": {
+        "wfId": "P16C255211111", "eventparams": {"powerStatus": 0}}}))
+    assert off.state == "off"
+
+
 def test_partsinfo_belongs_to_the_accessory_not_the_relaying_lock():
     """Live frame: lockId is the lock, eventparams.sn the door sensor whose
     battery it reports -- applied to the lock, its battery flapped 99 <-> 86."""

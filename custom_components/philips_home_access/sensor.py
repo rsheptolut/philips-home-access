@@ -22,9 +22,10 @@ async def async_setup_entry(
     coordinator: PhilipsCoordinator = hass.data[DOMAIN][entry.entry_id]
     # Every tracked esn, accessories included: the door sensor runs on its own
     # battery, separate from the lock's, and both are worth surfacing.
-    # (A gateway has no battery and is never tracked.)
+    # (A gateway has no battery of its own.)
     async_add_entities(PhilipsBatterySensor(coordinator, esn)
-                       for esn in coordinator.data)
+                       for esn in coordinator.data
+                       if esn not in coordinator.gateway_esns())
 
 
 class PhilipsBatterySensor(PhilipsLockEntity, SensorEntity):
