@@ -83,6 +83,13 @@ def test_gwinf_carries_plug_power_state():
     assert off.state == "off"
 
 
+def test_gwinf_carries_wifi_signal_and_ip():
+    ev = parse_event(_frame({"func": "gwInf", "body": {
+        "wfId": "P16C255211111", "eventparams": {
+            "powerStatus": 1, "ip": "10.0.0.195", "wifiSignal": -59}}}))
+    assert ev.wifi_signal == -59 and ev.ip == "10.0.0.195"
+
+
 def test_partsinfo_belongs_to_the_accessory_not_the_relaying_lock():
     """Live frame: lockId is the lock, eventparams.sn the door sensor whose
     battery it reports -- applied to the lock, its battery flapped 99 <-> 86."""

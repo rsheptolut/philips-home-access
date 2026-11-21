@@ -325,7 +325,12 @@ device model **DDL203**:
 - Also seen in the same capture: `POST /v3/device/operation-list`
   (`{esn, page}`, signed) -- paginated event history for a device/gateway
   (`eventType`/`eventCode`/`eventSource` fields, same vocabulary as the
-  WebSocket's `wfevent` records). Not yet used by this integration.
+  WebSocket's `wfevent` records), newest-first. `eventType` **5** = a power
+  toggle, `eventCode` **1=on, 2=off** -- confirmed against the two live
+  toggles in the same capture. Used by this integration (`async_latest_
+  gateway_power`) to seed a gateway's power state at startup, since
+  device/list itself carries no power field and the in-memory tracker state
+  is lost on every HA restart.
 
 ## Tooling produced
 - `index.android.bundle` — extracted Hermes bytecode (HBC v96).

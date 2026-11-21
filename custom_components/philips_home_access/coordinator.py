@@ -49,9 +49,10 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
             self.locks[lock.esn] = lock
             tr = self._trackers.get(lock.esn)
             if tr is None:
+                power = await self._seed_gateway_power(lock) if lock.is_gateway else None
                 self._trackers[lock.esn] = LockTracker(LockState(
                     lock.esn, bolt=lock.open_status, door=lock.door,
-                    battery=lock.battery, online=lock.online))
+                    battery=lock.battery, online=lock.online, power=power))
                 continue
             changes = tr.apply_poll(lock.open_status, lock.door, lock.battery,
                                     lock.online)
@@ -62,6 +63,18 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
         _LOGGER.debug("poll: %d lock(s): %s", len(locks),
                       {esn: tr.state.summary() for esn, tr in self._trackers.items()})
         return {esn: tr.state for esn, tr in self._trackers.items()}
+
+    async def _seed_gateway_power(self, lock: Lock) -> str | None:
+        """A gateway's power, from its operation-list history, for the one
+        poll cycle that creates its tracker -- otherwise it reads "unknown"
+        until the next real toggle, having lost whatever gwInf last told a
+        prior run (in-memory only, gone on every HA restart).
+        """
+        try:
+            return await self.client.async_latest_gateway_power(lock.esn)
+        except (HomeAccessConnectionError, AuthError) as e:
+            _LOGGER.debug("could not seed power for gateway %s: %s", lock.esn, e)
+            return None
 
     def _update_poll_interval(self) -> bool:
         """Slow-poll only while realtime is genuinely carrying every lock.

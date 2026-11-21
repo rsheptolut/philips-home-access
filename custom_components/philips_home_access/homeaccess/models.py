@@ -151,6 +151,8 @@ class LockEvent:
     battery: int | None = None
     msg_id: int | None = None   # per-delivery sequence number (differs on re-delivery)
     timestamp: str | None = None  # event time; timestamp+body identifies the event
+    wifi_signal: int | None = None  # dBm -- gateway/plug gwInf reports only
+    ip: str | None = None           # gateway/plug gwInf reports only
     raw: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:

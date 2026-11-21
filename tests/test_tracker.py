@@ -155,6 +155,30 @@ def test_gwinf_tracks_plug_power_state():
     assert tr.state.power == "off" and "power=off" in r.changes
 
 
+def test_power_pending_clears_once_gwinf_confirms_it():
+    tr = LockTracker(LockState("P16C255211111", power="off"))
+    tr.set_pending("turning_on", now=0)
+    assert tr.state.pending == "turning_on"
+    r = tr.apply(LockEvent("gwInf", "P16C255211111", state="on", timestamp="1"))
+    assert tr.state.power == "on" and tr.state.pending is None
+    assert "pending=cleared" in r.changes
+
+
+def test_power_pending_clears_via_poll_too():
+    tr = LockTracker(LockState("P16C255211111", power="on"))
+    tr.set_pending("turning_off", now=0)
+    changes = tr.apply_poll(None, None, None, True, now=5)
+    assert "pending=cleared" not in changes and tr.state.pending == "turning_off"
+
+
+def test_gwinf_tracks_wifi_signal_and_ip():
+    tr = LockTracker(LockState("P16C255211111"))
+    r = tr.apply(LockEvent("gwInf", "P16C255211111", wifi_signal=-59,
+                           ip="10.0.0.195", timestamp="1"))
+    assert tr.state.wifi_signal == -59 and tr.state.ip == "10.0.0.195"
+    assert "wifi_signal=-59" in r.changes and "ip=10.0.0.195" in r.changes
+
+
 def test_msgid_reset_after_power_cycle_is_ordered_by_time():
     """msgId restarts at 0 when the lock loses power; well apart in time, the
     timestamp decides, so the lock's events aren't ignored after a battery swap."""
