@@ -26,9 +26,6 @@ async def async_setup_entry(
     entities += [PhilipsLockStateSensor(coordinator, esn)
                  for esn in coordinator.lock_esns()
                  if esn in coordinator.state_only]
-    # A gateway some of these locks hang off also doubles as a switched outlet.
-    entities += [PhilipsPlugPowerSensor(coordinator, esn)
-                 for esn in coordinator.gateway_esns()]
     async_add_entities(entities)
 
 
@@ -60,24 +57,3 @@ class PhilipsLockStateSensor(PhilipsLockEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         st = self._lock_state
         return st.bolt == "unlocked" if st and st.bolt else None
-
-
-class PhilipsPlugPowerSensor(PhilipsLockEntity, BinarySensorEntity):
-    """Read-only: on/off state of a gateway used as a smart-plug outlet.
-
-    Reported only over the realtime gwInf event (no equivalent poll field is
-    known), so this stays unknown until the first event arrives. There's no
-    verified remote command to switch it from here -- see issue tracker.
-    """
-
-    _attr_device_class = BinarySensorDeviceClass.PLUG
-    _attr_name = "Power"
-
-    def __init__(self, coordinator: PhilipsCoordinator, esn: str) -> None:
-        super().__init__(coordinator, esn)
-        self._attr_unique_id = f"{esn}_power"
-
-    @property
-    def is_on(self) -> bool | None:
-        st = self._lock_state
-        return st.power == "on" if st and st.power else None

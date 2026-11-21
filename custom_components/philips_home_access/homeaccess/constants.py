@@ -114,6 +114,10 @@ CLOSE_DEVICE_PATH = "/v3/device/close-device"
 # has user reports of it working; not verified on our own hardware.
 GATEWAY_OPEN_PATH = "/v3/gateway/set-lock-open"
 GATEWAY_CLOSE_PATH = "/v3/gateway/set-lock-close"
+# Switches the gateway's own plug outlet on/off (some gateways double as a
+# smart plug). Plain signed body {esn, powerStatus: 0|1} -- unlike open/close,
+# not encrypted. Captured live via a phone-side TLS proxy, 2026-11-21.
+GATEWAY_SET_POWER_PATH = "/v3/gateway/set-gateway-power"
 QUERY_ATTR_PATH = "/v4/device/query-device-attr"
 QUERY_VERSION_PATH = "/v4/device/query-device-versioninfo"
 DTIM_WAKE_PATH = "/v3/device/dtim-wake"

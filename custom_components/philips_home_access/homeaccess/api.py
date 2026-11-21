@@ -359,6 +359,18 @@ class HomeAccess:
                 return updated
         return l
 
+    async def async_set_gateway_power(self, esn: str, on: bool) -> dict[str, Any]:
+        """set-gateway-power -> switches a gateway's own plug outlet on/off."""
+        l = await self.async_get(esn)
+        resp = await self.client(l.datacenter_code).post_signed(
+            constants.GATEWAY_SET_POWER_PATH,
+            {"esn": esn, "powerStatus": 1 if on else 0})
+        if str(resp.get("code")) != "200":
+            raise CommandError(
+                f"set-gateway-power for {esn} refused: code={resp.get('code')!r} "
+                f"msg={resp.get('msg')!r}")
+        return resp
+
     async def async_query_attr(self, esn: str) -> dict[str, Any]:
         l = await self.async_get(esn)
         return await self.client(l.datacenter_code).post_signed(

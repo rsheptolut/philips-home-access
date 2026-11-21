@@ -6,7 +6,7 @@ from datetime import timedelta
 from homeassistant.const import Platform
 
 DOMAIN = "philips_home_access"
-PLATFORMS = [Platform.LOCK, Platform.BINARY_SENSOR, Platform.SENSOR]
+PLATFORMS = [Platform.LOCK, Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SWITCH]
 
 # Config entry data keys
 CONF_AREACODE = "areacode"
