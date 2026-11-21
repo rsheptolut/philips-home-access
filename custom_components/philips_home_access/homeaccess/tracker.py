@@ -31,8 +31,11 @@ from .models import LockEvent
 # Events this close in time (s) are ordered by msgId rather than timestamp.
 REORDER_WINDOW = 10
 
-# pending command -> the bolt state that clears it
-_PENDING_TARGET = {"unlocking": "unlocked", "locking": "locked"}
+# pending command -> the state (and which LockState field) that clears it
+_PENDING_TARGET = {"unlocking": "unlocked", "locking": "locked",
+                   "turning_on": "on", "turning_off": "off"}
+_PENDING_FACET = {"unlocking": "bolt", "locking": "bolt",
+                  "turning_on": "power", "turning_off": "power"}
 
 # A pending command that no event or poll has confirmed in this long is given
 # up on, so a jammed bolt (or a lost confirmation) doesn't spin forever.
@@ -48,10 +51,16 @@ class LockState:
     pending: str | None = None     # "locking" | "unlocking" | None
     online: bool = True            # cloud's view of the device's WiFi connectivity
     pending_since: float | None = None  # time.monotonic() when pending was set
+    power: str | None = None       # "on" | "off" -- a gateway used as a smart outlet
+    wifi_signal: int | None = None  # dBm -- gateway/plug only
+    ip: str | None = None           # gateway/plug only
 
     def summary(self) -> str:
-        bat = f"{self.battery}%" if self.battery is not None else "?"
-        s = f"lock={self.bolt or '?'} door={self.door or '?'} battery={bat}"
+        if self.power is not None:  # a gateway/plug: no bolt, door or battery
+            s = f"power={self.power}"
+        else:
+            bat = f"{self.battery}%" if self.battery is not None else "?"
+            s = f"lock={self.bolt or '?'} door={self.door or '?'} battery={bat}"
         if not self.online:
             s += " OFFLINE"
         return s + (f" ({self.pending}…)" if self.pending else "")
@@ -104,6 +113,15 @@ class LockTracker:
             if pending else None
         return [f"pending={pending}" if pending else "pending=cleared"]
 
+    def _pending_cleared(self) -> list[str]:
+        """Clear `pending` once the facet it targets (bolt or power) has
+        reached its target -- whichever kind of command this pending is."""
+        pending = self.state.pending
+        if pending and getattr(self.state, _PENDING_FACET[pending]) == \
+                _PENDING_TARGET[pending]:
+            return self.set_pending(None)
+        return []
+
     def expire_pending(self, now: float | None = None) -> list[str]:
         """Drop a pending command older than PENDING_TIMEOUT."""
         since = self.state.pending_since
@@ -137,8 +155,7 @@ class LockTracker:
         if online != self.state.online:
             self.state.online = online
             changes.append(f"online={online}")
-        if self.state.pending and _PENDING_TARGET.get(self.state.pending) == self.state.bolt:
-            changes += self.set_pending(None)
+        changes += self._pending_cleared()
         changes += self.expire_pending(now)
         return changes
 
@@ -175,10 +192,6 @@ class LockTracker:
                 if ev.kind == "lock" and self.state.pending:  # confirmation
                     res.changes += self.set_pending(None)
 
-        # clear pending once the bolt has reached the commanded target
-        if self.state.pending and _PENDING_TARGET.get(self.state.pending) == self.state.bolt:
-            res.changes += self.set_pending(None)
-
         # door contact from door records, ordered by (ts, msgId)
         if ev.kind == "door" and ev.state in ("opened", "closed"):
             door = "open" if ev.state == "opened" else "closed"
@@ -196,5 +209,20 @@ class LockTracker:
             if ev.battery != self.state.battery:
                 self.state.battery = ev.battery
                 res.changes.append(f"battery={ev.battery}")
+
+        # gateway/plug relay state + diagnostics, from gwInf status reports
+        if ev.kind == "gwInf":
+            if ev.state in ("on", "off") and ev.state != self.state.power:
+                self.state.power = ev.state
+                res.changes.append(f"power={ev.state}")
+            if ev.wifi_signal is not None and ev.wifi_signal != self.state.wifi_signal:
+                self.state.wifi_signal = ev.wifi_signal
+                res.changes.append(f"wifi_signal={ev.wifi_signal}")
+            if ev.ip and ev.ip != self.state.ip:
+                self.state.ip = ev.ip
+                res.changes.append(f"ip={ev.ip}")
+
+        # clear pending once the facet it targets (bolt or power) reached it
+        res.changes += self._pending_cleared()
 
         return res

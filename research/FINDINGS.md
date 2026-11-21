@@ -303,6 +303,35 @@ manual changes.
   buttons is not traced yet (start from the callers of the open-device Retrofit
   method in `kk5`: `j6d`, `pbc`, `y0d`).
 
+## Gateway plug power (RESOLVED via live phone-side TLS capture, 2026-11-21)
+Some gateways double as a switched smart-plug outlet (independent of the Wi-Fi
+bolt-bridging role), controllable from the app's device screen. Captured via
+a phone-side MITM proxy toggling the outlet on/off. Tested against gateway
+device model **DDL203**:
+
+- `POST https://api.idlespacetech.com/v3/gateway/set-gateway-power`
+- Body: plain **signed, NOT encrypted** JSON --
+  `{"esn": <gateway esn>, "powerStatus": 1|0, "sign": ..., "reqTime": <ms string>}`
+  -- same `signed_body` shape as `query-device-attr`/`dtim-wake`, not the
+  RSA-encrypted `encryptData` wrapper lock open/close uses.
+- Response: `{"code":200,"msg":"Success","respTime":..., "sign":...}`.
+- State is also reported live over the realtime WebSocket as `func:"gwInf"`,
+  `body.eventparams.powerStatus` (1=on, 0=off), `body.wfId` = the gateway's esn,
+  `devtype:"gateway"`, `eventtype:"gwBleEvent"` (despite the "Ble" in the event
+  name, this is NOT BLE-local-only: toggling worked live with the phone's
+  Bluetooth turned off, confirming cloud/Wi-Fi control). `eventparams` also
+  carries `model` (e.g. "SGAHA"), `ip`, `mac`, `wifiName`, `wifiSignal`,
+  `ledStatus`, `timeZone`, `wifiVersion`, `functionSet` -- not yet surfaced.
+- Also seen in the same capture: `POST /v3/device/operation-list`
+  (`{esn, page}`, signed) -- paginated event history for a device/gateway
+  (`eventType`/`eventCode`/`eventSource` fields, same vocabulary as the
+  WebSocket's `wfevent` records), newest-first. `eventType` **5** = a power
+  toggle, `eventCode` **1=on, 2=off** -- confirmed against the two live
+  toggles in the same capture. Used by this integration (`async_latest_
+  gateway_power`) to seed a gateway's power state at startup, since
+  device/list itself carries no power field and the in-memory tracker state
+  is lost on every HA restart.
+
 ## Tooling produced
 - `index.android.bundle` — extracted Hermes bytecode (HBC v96).
 - `bundle.decompiled.js` — 55 MB pseudo-JS (hermes-dec). Grep this for logic.

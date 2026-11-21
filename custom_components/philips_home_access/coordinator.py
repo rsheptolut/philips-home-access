@@ -36,7 +36,6 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
         self._trackers: dict[str, LockTracker] = {}
         self._realtimes: dict[str, Realtime] = {}   # datacenter code -> listener
         self._ws_tasks: list = []
-        self._gateway_kinds_logged: set[tuple[str, str]] = set()
 
     # -- safety-net poll ----------------------------------------------------
     async def _async_update_data(self) -> dict[str, LockState]:
@@ -48,13 +47,12 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
             raise UpdateFailed(str(e)) from e
         for lock in locks:
             self.locks[lock.esn] = lock
-            if lock.is_gateway:
-                continue  # no bolt, door or battery to track; kept for device info
             tr = self._trackers.get(lock.esn)
             if tr is None:
+                power = await self._seed_gateway_power(lock) if lock.is_gateway else None
                 self._trackers[lock.esn] = LockTracker(LockState(
                     lock.esn, bolt=lock.open_status, door=lock.door,
-                    battery=lock.battery, online=lock.online))
+                    battery=lock.battery, online=lock.online, power=power))
                 continue
             changes = tr.apply_poll(lock.open_status, lock.door, lock.battery,
                                     lock.online)
@@ -65,6 +63,18 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
         _LOGGER.debug("poll: %d lock(s): %s", len(locks),
                       {esn: tr.state.summary() for esn, tr in self._trackers.items()})
         return {esn: tr.state for esn, tr in self._trackers.items()}
+
+    async def _seed_gateway_power(self, lock: Lock) -> str | None:
+        """A gateway's power, from its operation-list history, for the one
+        poll cycle that creates its tracker -- otherwise it reads "unknown"
+        until the next real toggle, having lost whatever gwInf last told a
+        prior run (in-memory only, gone on every HA restart).
+        """
+        try:
+            return await self.client.async_latest_gateway_power(lock.esn)
+        except (HomeAccessConnectionError, AuthError) as e:
+            _LOGGER.debug("could not seed power for gateway %s: %s", lock.esn, e)
+            return None
 
     def _update_poll_interval(self) -> bool:
         """Slow-poll only while realtime is genuinely carrying every lock.
@@ -91,14 +101,20 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
 
     # -- device roles -------------------------------------------------------
     def lock_esns(self) -> list[str]:
-        """The esns that are actually locks -- accessories filtered out.
+        """The esns that are actually locks -- gateways and accessories filtered out.
 
-        device/list returns paired accessories (the door sensor) alongside the
-        lock, so platforms that only make sense for a lock use this instead of
-        iterating every esn in `data`. (Gateways never reach `data` at all.)
+        device/list returns paired accessories (the door sensor) and gateways
+        alongside the lock, so platforms that only make sense for a lock use
+        this instead of iterating every esn in `data`.
         """
         return [esn for esn in self.data
-                if not (esn in self.locks and self.locks[esn].is_accessory)]
+                if not (esn in self.locks and
+                       (self.locks[esn].is_gateway or self.locks[esn].is_accessory))]
+
+    def gateway_esns(self) -> list[str]:
+        """The esns that are Wi-Fi gateways -- some doubling as a smart-plug
+        outlet, switched on/off independently of the locks they bridge."""
+        return [esn for esn in self.data if esn in self.locks and self.locks[esn].is_gateway]
 
     # -- commands -----------------------------------------------------------
     @callback
@@ -173,18 +189,6 @@ class PhilipsCoordinator(DataUpdateCoordinator[dict[str, LockState]]):
     def _on_event(self, ev: LockEvent) -> None:
         tr = self._trackers.get(ev.lock_id)
         if tr is None:
-            dev = self.locks.get(ev.lock_id)
-            if dev is not None and dev.is_gateway:
-                # Unverified territory: do a gateway lock's events arrive under
-                # the gateway's esn? Surface each kind once so a user's log
-                # answers it.
-                key = (ev.lock_id, ev.kind)
-                if key not in self._gateway_kinds_logged:
-                    self._gateway_kinds_logged.add(key)
-                    _LOGGER.info("ws event %s from gateway %s (not applied; please "
-                                 "report on GitHub): %s", ev.kind, ev.lock_id,
-                                 str(ev.raw)[:400])
-                return
             _LOGGER.debug("ws event for unknown lock %s (ignored)", ev.lock_id)
             return
         res = tr.apply(ev)

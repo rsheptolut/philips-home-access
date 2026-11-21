@@ -114,6 +114,14 @@ CLOSE_DEVICE_PATH = "/v3/device/close-device"
 # has user reports of it working; not verified on our own hardware.
 GATEWAY_OPEN_PATH = "/v3/gateway/set-lock-open"
 GATEWAY_CLOSE_PATH = "/v3/gateway/set-lock-close"
+# Switches the gateway's own plug outlet on/off (some gateways double as a
+# smart plug). Plain signed body {esn, powerStatus: 0|1} -- unlike open/close,
+# not encrypted. Captured live via a phone-side TLS proxy, 2026-11-21.
+GATEWAY_SET_POWER_PATH = "/v3/gateway/set-gateway-power"
+# Paginated event history for a device/gateway (signed, not encrypted). Used
+# here only to seed a gateway's power state across a HA restart, before any
+# gwInf event has arrived -- device/list itself carries no power field.
+OPERATION_LIST_PATH = "/v3/device/operation-list"
 QUERY_ATTR_PATH = "/v4/device/query-device-attr"
 QUERY_VERSION_PATH = "/v4/device/query-device-versioninfo"
 DTIM_WAKE_PATH = "/v3/device/dtim-wake"
@@ -154,3 +162,9 @@ OPEN_STATUS = {1: "locked", 2: "unlocked"}
 # closed (=2) so far; the open (=1) mapping mirrors the door eventCode and
 # self-corrects on the first door event. Verify by opening the door + `status`.
 MAGNETIC_STATUS = {1: "open", 2: "closed"}
+
+# operation-list record eventType for a gateway/plug power toggle, and its
+# eventCode -> on/off. Observed live: eventCode 1 paired with a powerStatus=1
+# gwInf push, eventCode 2 with powerStatus=0; records come back newest-first.
+GATEWAY_POWER_EVENT_TYPE = 5
+GATEWAY_POWER_EVENT_CODE = {1: "on", 2: "off"}

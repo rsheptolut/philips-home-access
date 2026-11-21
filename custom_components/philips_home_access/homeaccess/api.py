@@ -41,6 +41,16 @@ def _normalize_mac(mac: str) -> str:
     return ":".join(cleaned[i:i + 2] for i in range(0, 12, 2))
 
 
+def _latest_gateway_power(records: list[dict[str, Any]]) -> str | None:
+    """"on"/"off" from operation-list's newest power-toggle record, or None
+    if the page has none (a brand new gateway, or one that's never been
+    toggled)."""
+    for rec in records:
+        if rec.get("eventType") == constants.GATEWAY_POWER_EVENT_TYPE:
+            return constants.GATEWAY_POWER_EVENT_CODE.get(rec.get("eventCode"))
+    return None
+
+
 class HomeAccess:
     def __init__(self, settings: Settings | None = None,
                  session: aiohttp.ClientSession | None = None) -> None:
@@ -358,6 +368,27 @@ class HomeAccess:
                 await self._cache_devices()
                 return updated
         return l
+
+    async def async_set_gateway_power(self, esn: str, on: bool) -> dict[str, Any]:
+        """set-gateway-power -> switches a gateway's own plug outlet on/off."""
+        l = await self.async_get(esn)
+        resp = await self.client(l.datacenter_code).post_signed(
+            constants.GATEWAY_SET_POWER_PATH,
+            {"esn": esn, "powerStatus": 1 if on else 0})
+        if str(resp.get("code")) != "200":
+            raise CommandError(
+                f"set-gateway-power for {esn} refused: code={resp.get('code')!r} "
+                f"msg={resp.get('msg')!r}")
+        return resp
+
+    async def async_latest_gateway_power(self, esn: str) -> str | None:
+        """Best-known on/off for a gateway, from its most recent operation-list
+        power-toggle record -- used to seed state across a restart, since
+        device/list itself carries no power field for a gateway."""
+        l = await self.async_get(esn)
+        resp = await self.client(l.datacenter_code).post_signed(
+            constants.OPERATION_LIST_PATH, {"esn": esn, "page": 1})
+        return _latest_gateway_power(resp.get("data") or [])
 
     async def async_query_attr(self, esn: str) -> dict[str, Any]:
         l = await self.async_get(esn)

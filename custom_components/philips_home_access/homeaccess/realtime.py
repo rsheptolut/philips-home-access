@@ -91,6 +91,11 @@ def _classify(d: dict) -> LockEvent | None:
         if ev == "wifiState":  # device's WiFi link to the cloud went up/down
             return LockEvent("wifiState", lock_id, state=body.get("state"), raw=d)
         return LockEvent(f"wfevent/{ev}", lock_id, raw=d)
+
+    if func == "gwInf":  # gateway/plug status report (also used as a smart outlet)
+        return LockEvent("gwInf", lock_id,
+                         state={0: "off", 1: "on"}.get(p.get("powerStatus")),
+                         wifi_signal=_int(p.get("wifiSignal")), ip=p.get("ip"), raw=d)
     return LockEvent(func or "?", lock_id, raw=d)
 
 
